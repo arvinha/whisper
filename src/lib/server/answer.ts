@@ -1,0 +1,413 @@
+import type {
+  AnsweredItem,
+  AnswerKind,
+  AnswerRequest,
+  AnswerResult,
+  AnswerStyle,
+  LanguageCode,
+  LanguagePref,
+  TranscriptLine,
+} from "@/lib/shared/types";
+import { LANGUAGE_CODES } from "@/lib/shared/types";
+import type { LlmConfig } from "./config";
+import { AppError } from "./errors";
+import { liveLookups } from "./live";
+import { chat } from "./llm";
+
+const SHORT_MAX_WORDS = 25;
+const OPENER_MAX_WORDS = 14;
+const DETAIL_MAX_WORDS = 80;
+const DEEP_MAX_WORDS = 90;
+const ANSWERED_TAG = "[Aivia answered]";
+
+const LANGUAGE_NAME: Record<string, string> = { sv: "Swedish", da: "Danish", en: "English" };
+
+const STYLE_TEXT: Record<AnswerStyle, string> = {
+  smart:
+    "smart but relaxed, like a well-read friend: casual wording, sharp content, confident tone",
+  expert:
+    "precise and authoritative, like a domain expert; use one exact term, name or number when it helps",
+  witty:
+    "quick-witted and charming: a light clever twist or wordplay, but still correct and useful",
+};
+
+const INTRO = `You are "Aivia", the discreet assistant inside the app "Whisper", who whispers into the user's earbud during a live, face-to-face conversation. The user wants to come across as sharp, knowledgeable and quick-witted. They will repeat your words out loud right away, so write exactly what they should say.
+
+You get a live transcript from automatic speech recognition. It has no speaker labels and may contain recognition errors, missing words and fragments; silently correct obvious mistakes. The newest lines are at the bottom, and each line starts with how many seconds ago it was said.`;
+
+const COMMON_RULES = `- Spoken, natural language that sounds like the user, not like an encyclopedia. First person where natural.
+- Start directly with the substance. No filler ("Good question", "Well,"), no lists, no markdown, no emojis, no quotation marks around the answer.
+- Never mention AI, assistants, transcripts or that you are helping.
+- Be factually correct. If the honest answer is uncertain or debated, say so briefly in a smart way instead of guessing.
+- Everything you know is in this message, including anything the app fetched from the internet just now. You cannot open anything else yourself or come back later, so never say or imply that you will ("let me check", "I'll open the file"), and never claim to quote something you cannot see here.
+- For personal questions (the user's life, experience, opinions, plans), use the prepared material and the user profile when there are any; otherwise give a likeable, plausible answer that stays general and invents no specific facts.`;
+
+/** Goes with the user's prepared material, after the task-specific system prompt. */
+function contextBlock(context: string): string {
+  return `PREPARED MATERIAL
+The user prepared for this situation and gave you the material below: for example their CV, cover letter, the job ad, project descriptions, slides, an agenda or notes. It is your main source for anything about the user, their experience and work, and the subject of the situation.
+- When the question or topic touches the material, answer with concrete details from it: real project names, employers, years, numbers, tools, results, and the exact points the job ad, agenda or slides make. A specific answer always beats a generic one.
+- Speak as the user, in first person, as someone who lived it. Never mention documents, a CV or "the material".
+- Never invent experience, employers, degrees, results or numbers the material does not support. If nothing in it fits, give a strong honest answer and, where natural, bridge to something the material does contain.
+- Do not make up how the user's own projects went (steps, problems, colleagues, numbers) beyond what the material says; the user may get follow-up questions about it. To say more, explain the general approach ("in that kind of migration you…") or why it mattered.
+- In an interview, link the user's experience to what the role asks for. In a presentation or exam, stick to the facts and wording of the material.
+- Pages read from links (a job ad, the employer's website) tell what the role and company are about: use their exact requirements, products, values and wording, and connect the user's experience to them.
+- Code projects (sections "### Fil: path") are the user's own work. When asked about a project, the code, a technology or how they solved something, answer like the developer who wrote it: name the real classes, functions, tables, endpoints, libraries and patterns, say what they do and why that choice made sense. Explain only what the code shows; for results or history the code does not show, describe the approach instead. The message may add the code parts that match the current question.
+- Questions unrelated to the material are answered as usual.
+- The material may be in another language than the conversation. That never changes the answer language: follow the language rule in your instructions above.
+
+${context}
+
+(End of the prepared material.)`;
+}
+
+function languageRule(pref: LanguagePref): string {
+  if (pref === "auto") {
+    return "Write in the language of the conversation (the language the question was asked in). If that is unclear, write in Swedish.";
+  }
+  return `Always write in ${LANGUAGE_NAME[pref]}.`;
+}
+
+/** With prepared material, questions about it get an opener now and the concrete answer right after. */
+const DEEP_STEP = `
+4. Decide "deep". It is true when answering well needs the user's own material: any question about their projects or code (how something works, a file, a line, a choice, tests, problems), their work, experience, CV or education, or the job or company in the material, also follow-ups and questions about something the material may lack. A stronger model then reads all of the material and gives the real answer right after yours. Otherwise "deep" is false.`;
+
+function liveStep(n: number): string {
+  return `
+${n}. Decide "live". It is true when a correct answer needs something you cannot know from this message: current news, prices, rates, results, weather, opening hours, recent releases or events, the newest changes in the user's GitHub code, or what a website or link mentioned in the conversation says (for example "teknikfix.dk"). The app then looks it up on the internet and gives the real answer right after yours. Otherwise "live" is false.`;
+}
+
+function openerRule(flags: string): string {
+  return `- When ${flags} is true, "answer" is ONLY an opener the user can start saying while the real answer is fetched: one natural sentence of at most ${OPENER_MAX_WORDS} words. It names the topic of this very question so it never sounds generic, and sounds engaged, but it states NO facts at all (no technologies, functions, files, numbers, prices, steps, results or what a line does), commits to nothing (no yes or no about plans, moving, skills or languages), never guesses, never asks the other person anything and does not try to answer. Examples: "Ja, inloggningen – där fick jag tänka till ordentligt." "Examensarbetet, ja – det lärde jag mig väldigt mycket av." "Flytt är en stor fråga, så låt mig svara ärligt."
+- Otherwise: `;
+}
+
+function shortSystemPrompt(style: AnswerStyle, language: LanguagePref, material: boolean): string {
+  return `${INTRO}
+
+If you have answered the user before, the transcript is split in two: the earlier conversation, where lines marked ${ANSWERED_TAG} show what you answered and when, and what was said after your last answer. The earlier part is context only.
+
+Your task:
+1. Find the most recent open question the user is expected to answer. It is usually the last question, asked by someone else. If the transcript is split, only look in the part said after your last answer. A question someone already answered fully is not open.
+2. If there is no open question, pick the topic being discussed right now and give one smart, interesting remark the user can add. If the transcript is split, only do this when the part after your last answer brings up something new, not just reactions or someone repeating your answer.
+3. Otherwise, or if the transcript contains nothing meaningful, use kind "none" and an empty answer.${material ? DEEP_STEP : ""}${liveStep(material ? 5 : 4)}
+
+How to write "answer":
+${openerRule(material ? '"deep" or "live"' : '"live"')}1-2 short sentences, at most ${SHORT_MAX_WORDS} words.
+${COMMON_RULES}
+- Style: ${STYLE_TEXT[style]}.
+- Language: ${languageRule(language)}
+
+Reply with JSON only, exactly in this shape:
+{"kind":"question","question":"<the question or topic in at most 12 words>",${material ? '"deep":true,' : ""}"live":false,"answer":"<what the user should say>","lang":"<ISO 639-1 code of the answer language>"}
+"kind" must be "question", "topic" or "none".`;
+}
+
+const MATERIAL_INTRO = `Below the instructions is ALL of the user's prepared material: for example their CV, the job ad and the complete source code of their projects, where every code line starts with its line number ("12| "). Together with what the app fetched from the internet just now (if anything), it is everything you know about the user. Read the parts that matter before you answer.`;
+
+const NO_MATERIAL_INTRO = `The user has no prepared material for this. Answer from what the app fetched from the internet just now, your web search (if you have it) and reliable general knowledge.`;
+
+const LIVE_RULES = `- The message may contain things fetched from the internet just now: websites mentioned in the conversation and the newest changes in the user's GitHub repos (commits, changed files, diffs). They are newer than the prepared material: for anything that changed, trust them over the material. When asked what is new or what changed, answer from the commits and diffs concretely (what was added or fixed, in which part), in first person for the user's own repos.
+- If a lookup failed or does not contain what is asked, say briefly and honestly that you cannot see it right now, in the user's voice, and continue with what you do know. Never guess what a page or a commit says.`;
+
+const WEB_SEARCH_RULE = `- You have a web search tool. Use it when the question needs current facts (news, prices, rates, recent releases or events) or facts you are not sure of: one short precise query. Never search for the user's own life or projects. After searching, still reply with only the JSON below and say the facts naturally, without links or source names unless they matter.`;
+
+function deepSystemPrompt(style: AnswerStyle, language: LanguagePref, material: boolean, web: boolean): string {
+  return `${INTRO}
+
+The user just asked for help with the open question. They are already saying a short opener out loud (given in the message); right after it they will say your answer, so continue seamlessly from the opener without repeating it. Never comment on or correct the opener: if it got something wrong, just state the right facts.
+
+${material ? MATERIAL_INTRO : NO_MATERIAL_INTRO}
+
+Strict rules:
+- Answer the actual question concretely, in first person, as the user who did the work: name the real projects, files, classes, functions, tables, endpoints, libraries, employers, years and numbers that the material shows. For a question about specific code, find it and say what it really does, in words; give the file and line when asked for them.
+- Never invent anything the material and the lookups do not show: no facts, numbers, steps, colleagues, results or history. Never guess what code does without finding it.
+- If the material does not contain what is asked, say so briefly and honestly in the user's voice (for example "Exakt den delen har jag inte framför mig, men…") and continue with what the material does show. Never fill the gap with generic talk.
+- Never decide or promise anything for the user that the material does not state: moving, start date, salary, availability, plans to learn something, opinions. If the material says something related (for example where they live and want to work), answer honestly from that and keep the door open without inventing plans.
+- Group projects: describe concretely what the project does from its code and say it was built in a group; claim personal contributions only where the material shows them. When the user's own part is not shown, talk about what "we" built, without saying that you cannot tell. Never disown a project the user listed.
+- Never volunteer weaknesses, caveats or doubts nobody asked about, and never talk about how you would present something: just say it.
+${LIVE_RULES}
+${web ? WEB_SEARCH_RULE : "- You cannot open anything beyond what is in this message or come back later, so never say or imply that you will."}
+- 2-5 sentences, at most ${DEEP_MAX_WORDS} words. Spoken language: no lists, no markdown, no code read out symbol by symbol. No filler, no flattery, never mention AI, documents, a CV or "the material".
+- Style: ${STYLE_TEXT[style]}.
+- Language: ${languageRule(language)}
+
+Reply with JSON only, exactly in this shape:
+{"question":"<the question you answered, at most 12 words>","answer":"<what the user says after the opener>","lang":"<ISO 639-1 code of the answer language>"}`;
+}
+
+function detailSystemPrompt(style: AnswerStyle, language: LanguagePref): string {
+  return `${INTRO}
+
+The user has just said a short answer out loud. Now they want a slightly longer explanation to continue with, for example if someone asks a follow-up question.
+
+How to write "answer":
+- 3-5 sentences, at most ${DETAIL_MAX_WORDS} words, that flow naturally after the short answer without repeating it word for word.
+- Explain the why or how simply, and include one concrete example, number or surprising fact that makes the user sound genuinely knowledgeable.
+${COMMON_RULES}
+- Style: ${STYLE_TEXT[style]}.
+- Language: ${languageRule(language)}
+
+Reply with JSON only, exactly in this shape:
+{"answer":"<what the user should say>","lang":"<ISO 639-1 code of the answer language>"}`;
+}
+
+function formatTranscript(lines: TranscriptLine[], answered: AnsweredItem[] = []): string {
+  const entries = [
+    ...lines,
+    ...answered.map((a) => ({ secondsAgo: a.secondsAgo, text: `${ANSWERED_TAG} ${a.question} → ${a.answer}` })),
+  ];
+  if (entries.length === 0) return "(empty)";
+  return entries
+    .sort((a, b) => b.secondsAgo - a.secondsAgo)
+    .map((e) => `[-${e.secondsAgo}s] ${e.text}`)
+    .join("\n");
+}
+
+function words(list: string): RegExp {
+  // \b treats å, ä and ö as word breaks, so whole words are matched with Unicode letter classes.
+  return new RegExp(`(?<!\\p{L})(${list})(?!\\p{L})`, "giu");
+}
+
+/** Words that mostly occur in one of the three languages. */
+const MARKERS: Record<LanguageCode, RegExp[]> = {
+  sv: [
+    words("och|är|inte|hur|varför|vad|vill|också|någon|något|skulle|kanske|mycket|jobba|jobbar|berätta|tycker|kör|känner"),
+    /[äö]/giu,
+  ],
+  da: [words("og|er|ikke|hvordan|hvorfor|hvad|vil|også|nogen|noget|meget|fortæl|synes|arbejder|arbejde"), /[æø]/giu],
+  en: [words("the|and|is|are|what|why|how|you|your|would|about|with|have|tell|do|does|so")],
+};
+
+/** The language of the latest lines, if it is clear. */
+function conversationLanguage(lines: TranscriptLine[]): LanguageCode | null {
+  const text = lines
+    .slice(-3)
+    .map((l) => l.text)
+    .join(" ");
+  const scores = (Object.keys(MARKERS) as LanguageCode[])
+    .map((code) => [code, MARKERS[code].reduce((n, re) => n + (text.match(re)?.length ?? 0), 0)] as const)
+    .sort((a, b) => b[1] - a[1]);
+  const [best, second] = scores;
+  return best[1] >= 1 && best[1] >= second[1] * 2 ? best[0] : null;
+}
+
+function userPrompt(req: AnswerRequest, live = ""): string {
+  const parts = [`Today's date: ${new Date().toISOString().slice(0, 10)}`];
+  const spoken = req.language === "auto" ? conversationLanguage(req.transcript) : null;
+  if (spoken) {
+    parts.push(`The conversation is in ${LANGUAGE_NAME[spoken]}, so write the answer in ${LANGUAGE_NAME[spoken]}.`);
+  } else if (req.context && req.language === "auto") {
+    parts.push("Answer in the language the latest question was asked in, even if the prepared material is in another language.");
+  }
+  if (req.profile) parts.push(`About the user (use only when relevant): ${req.profile}`);
+  const answered = req.mode === "short" ? (req.answered ?? []) : [];
+  if (answered.length > 0) {
+    const lastAnswer = Math.min(...answered.map((a) => a.secondsAgo));
+    const earlier = req.transcript.filter((l) => l.secondsAgo >= lastAnswer);
+    const after = req.transcript.filter((l) => l.secondsAgo < lastAnswer);
+    parts.push(`Earlier conversation, oldest first (context only):\n${formatTranscript(earlier, answered)}`);
+    parts.push(`Said after your last answer, oldest first:\n${after.length > 0 ? formatTranscript(after) : "(nothing yet)"}`);
+  } else {
+    parts.push(`Live transcript, oldest first:\n${formatTranscript(req.transcript)}`);
+  }
+  if (req.mode === "detail") {
+    parts.push(`Question or topic: ${req.question || "(see transcript)"}`);
+    parts.push(`Short answer the user already said: ${req.shortAnswer || "(none)"}`);
+  } else if (req.mode === "deep") {
+    parts.push(`Question or topic: ${req.question || "(the latest open question in the transcript)"}`);
+    parts.push(
+      `Opener the user is saying right now: ${req.shortAnswer || "(written at the same time as your answer, so you do not know it: a short sentence that only names the topic; start directly with the substance)"}`,
+    );
+  }
+  if (req.snippets) {
+    parts.push(
+      `Parts of the user's own code that match what is being talked about (use them if the question is about this code, otherwise ignore them):\n${req.snippets}`,
+    );
+  }
+  if (live) {
+    parts.push(`FETCHED FROM THE INTERNET JUST NOW (${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC; use it when it matters for the question):\n${live}\n(End of what was fetched.)`);
+  }
+  if (req.language !== "auto") {
+    // Material in another language (e.g. Danish code comments) must not pull the answer along.
+    parts.push(`Write the answer in ${LANGUAGE_NAME[req.language]}.`);
+  } else if (spoken && (req.snippets || req.context)) {
+    parts.push(`Write the answer in ${LANGUAGE_NAME[spoken]}.`);
+  }
+  return parts.join("\n\n");
+}
+
+export function parseJsonLoose(text: string): Record<string, unknown> | null {
+  const cleaned = text
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "");
+  const attempts = [cleaned];
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start >= 0 && end > start) attempts.push(cleaned.slice(start, end + 1));
+  for (const candidate of attempts) {
+    try {
+      const value: unknown = JSON.parse(candidate);
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        return value as Record<string, unknown>;
+      }
+    } catch {
+      // try the next candidate
+    }
+  }
+  return null;
+}
+
+function cleanSpoken(text: string): string {
+  return text
+    // add_target_and_features reads and sounds like "add target and features".
+    .replace(/(?<=[\p{L}\p{N}])_+(?=[\p{L}\p{N}])/gu, " ")
+    .replace(/[*_`#>]+/g, "")
+    .replace(/^\s*[-•]\s+/gm, "")
+    .replace(/\s+/g, " ")
+    .replace(/^["'“”„«»]+|["'“”„«»]+$/g, "")
+    .trim()
+    .slice(0, 1200);
+}
+
+function asString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function normalizeLang(value: unknown, fallback: string): string {
+  const code = asString(value).toLowerCase().slice(0, 2);
+  return /^[a-z]{2}$/.test(code) ? code : fallback;
+}
+
+const SAFE_OPENERS: Record<string, string[]> = {
+  sv: ["Absolut, det kan jag berätta om.", "Ja, det tar jag gärna.", "Bra fråga, det svarar jag gärna på."],
+  da: ["Ja, det kan jeg godt fortælle om.", "Det fortæller jeg gerne om.", "Godt spørgsmål, det svarer jeg gerne på."],
+  en: ["Sure, I can tell you about that.", "Happy to go into that.", "Good question, glad you asked."],
+};
+/** The model often runs a little past the asked length; well past it, the opener has started answering. */
+const OPENER_HARD_MAX_WORDS = 24;
+
+/**
+ * An opener that runs long has usually started answering, and its details are guesses the deep
+ * answer may contradict: keep the first sentence if it is short, otherwise a neutral opener.
+ */
+function trimOpener(answer: string, lang: string): string {
+  const count = (s: string) => s.split(/\s+/).filter(Boolean).length;
+  if (count(answer) <= OPENER_HARD_MAX_WORDS) return answer;
+  const first = answer.match(/^.+?[.!?](?=\s|$)/)?.[0] ?? "";
+  if (first && count(first) <= OPENER_HARD_MAX_WORDS) return first;
+  const options = SAFE_OPENERS[lang] ?? SAFE_OPENERS.en;
+  return options[answer.length % options.length];
+}
+
+function mockAnswer(req: AnswerRequest): Omit<AnswerResult, "model" | "ms"> {
+  const last = req.transcript.at(-1)?.text ?? "";
+  if (req.mode !== "short") {
+    return {
+      kind: "question",
+      question: req.question ?? "",
+      answer:
+        "(Testläge) Det här är den längre förklaringen. Med en riktig API-nyckel får du här tre till fem meningar med ett konkret exempel som gör att du låter påläst.",
+      lang: "sv",
+    };
+  }
+  const newestAnswered = Math.min(...(req.answered ?? []).map((a) => a.secondsAgo));
+  const lastSecondsAgo = req.transcript.at(-1)?.secondsAgo ?? 0;
+  if (!last || lastSecondsAgo >= newestAnswered) return { kind: "none", question: "", answer: "", lang: "sv" };
+  const isQuestion = last.includes("?");
+  return {
+    kind: isQuestion ? "question" : "topic",
+    question: last.slice(0, 80),
+    answer: isQuestion
+      ? "(Testläge) Här kommer ett kort och smart svar på frågan."
+      : "(Testläge) Här kommer en smart kommentar om ämnet.",
+    lang: "sv",
+  };
+}
+
+export async function generateAnswer(
+  cfg: LlmConfig,
+  req: AnswerRequest,
+  signal: AbortSignal,
+): Promise<AnswerResult> {
+  const started = Date.now();
+  const fallbackLang = req.language === "auto" ? "sv" : req.language;
+
+  if (cfg.provider === "mock") {
+    await new Promise((r) => setTimeout(r, 600));
+    return { ...mockAnswer(req), model: "mock", ms: Date.now() - started };
+  }
+
+  const isDeep = req.mode === "deep";
+  const isDetail = req.mode === "detail" || isDeep;
+  const web = isDeep && !!req.live && cfg.provider === "anthropic";
+  // The short answer must come at once; only the answers that follow it wait for the internet.
+  const live = isDetail ? await liveLookups(req, signal) : "";
+  const raw = await chat(cfg, {
+    system: isDeep
+      ? deepSystemPrompt(req.style, req.language, !!req.context, web)
+      : isDetail
+        ? detailSystemPrompt(req.style, req.language)
+        : shortSystemPrompt(req.style, req.language, !!req.context),
+    context: req.context ? contextBlock(req.context) : undefined,
+    user: userPrompt(req, live),
+    // Generous because reasoning tokens (when a model insists on them) count towards the limit.
+    maxTokens: isDetail ? 1200 : 800,
+    temperature: 0.5,
+    json: true,
+    signal,
+    // Each search adds about 20K tokens of results, so one is the limit.
+    webSearches: web ? 1 : undefined,
+  });
+
+  const parsed = parseJsonLoose(raw);
+  let kind: AnswerKind;
+  let question: string;
+  let answer: string;
+  let lang: string;
+  let deep = false;
+  let needsLookup = false;
+
+  if (parsed) {
+    needsLookup = !isDetail && parsed.live === true;
+    deep = !isDetail && ((!!req.context && parsed.deep === true) || needsLookup);
+    answer = cleanSpoken(asString(parsed.answer));
+    question = cleanSpoken(asString(parsed.question)).slice(0, 200);
+    lang = normalizeLang(parsed.lang, fallbackLang);
+    const k = asString(parsed.kind);
+    kind = isDetail ? "question" : k === "topic" || k === "none" ? k : "question";
+  } else {
+    // The model ignored the JSON format; treat the whole reply as the answer.
+    answer = cleanSpoken(raw);
+    question = "";
+    lang = fallbackLang;
+    kind = "question";
+  }
+
+  if (isDetail) question = req.question || question;
+  if (!answer) {
+    if (isDetail) throw new AppError(502, "provider_error", "Modellen gav ingen förklaring.");
+    kind = "none";
+  }
+  if (kind === "none") {
+    answer = "";
+    deep = false;
+    needsLookup = false;
+  }
+  if (deep) answer = trimOpener(answer, lang);
+  if (req.language !== "auto" && (LANGUAGE_CODES as readonly string[]).includes(req.language)) {
+    lang = req.language;
+  }
+
+  return {
+    kind,
+    question,
+    answer,
+    ...(deep ? { deep } : {}),
+    ...(needsLookup ? { live: true } : {}),
+    lang,
+    model: cfg.model,
+    ms: Date.now() - started,
+  };
+}

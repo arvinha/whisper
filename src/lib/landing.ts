@@ -41,12 +41,12 @@ export const LANDING: Record<UiLang, LandingCopy> = {
   sv: {
     title: "Whisper – AI-assistent för möten, redovisningar och anteckningar",
     description:
-      "Whisper följer dina samtal, antecknar live och har ditt eget underlag redo. Ett tryck ger dig en kort ledtråd utifrån samtalet och dina dokument. Få sammanfattning och påminnelser efteråt. Testa gratis i 2 dagar.",
+      "Whisper följer dina samtal, antecknar live och har ditt eget underlag redo. Ett tryck ger dig en kort ledtråd utifrån samtalet och dina dokument. Få sammanfattning och påminnelser efteråt. Testa 20 minuter gratis.",
     kicker: "AI-assistent för samtal",
     h1: "Din AI-assistent i varje samtal",
     lead: "Whisper följer samtalet med dig. Den antecknar live, har dina egna dokument, länkar och din kod redo, och med ett tryck får du en kort ledtråd om det som är viktigt just nu. Efteråt får du en sammanfattning med påminnelser.",
     cta: "Testa gratis",
-    ctaNote: "2 dagar gratis · inget kort behövs",
+    ctaNote: "20 minuter gratis · inget kort behövs",
     whyKicker: "Varför Aivia?",
     whyQuote: "ChatGPT är en hjärna du måste gå till. Aivia är öronen som redan är på plats.",
     whyLead:
@@ -82,13 +82,12 @@ export const LANDING: Record<UiLang, LandingCopy> = {
     ],
     pricesTitle: "Priser",
     prices: [
-      { name: "Provperiod", price: "0 kr", note: "2 dagar eller 3 timmar. Inget kort." },
-      { name: "5 timmar", price: "49 kr", note: "Räcker till några möten eller redovisningar." },
-      { name: "15 timmar", price: "119 kr", note: "Populärast. Räcker långt för jobb, möten och plugg." },
-      { name: "40 timmar", price: "249 kr", note: "Bäst pris per timme." },
+      { name: "Testa gratis", price: "0 kr", note: "20 minuter, svar ingår. Inget kort." },
+      { name: "Lyssna", price: "10 öre/min", note: "Bara när någon pratar. En timmes föreläsning kostar runt 4 kr." },
+      { name: "Svar", price: "50 öre", note: "Varje gång du trycker och får ett svar. En jobbintervju kostar ofta 15–20 kr." },
     ],
     pricesNote:
-      "Som ett kontantkort: timmarna räknas bara ner när Aivia lyssnar och går aldrig ut. Inget abonnemang. Priser inkl. moms.",
+      "Fyll på 50, 100 eller 250 kr, som ett kontantkort. Saldot går aldrig ut, inget abonnemang och inget dras automatiskt. Priser inkl. moms.",
     faqTitle: "Vanliga frågor",
     faq: [
       ["Behöver jag ladda ner något?", "Nej. Whisper körs i webbläsaren. På iPhone trycker du Dela → Lägg till på hemskärmen, så fungerar den som en app."],
@@ -99,7 +98,7 @@ export const LANDING: Record<UiLang, LandingCopy> = {
         "Varför inte bara använda ChatGPT eller Gemini?",
         "De är bra hjärnor, men de vet bara det du skriver in, och du måste stanna upp och fråga. Aivia har redan hört samtalet, ger dig en kort ledtråd när du trycker, och föreslår själv tider och påminnelser från det hon hört. Använd gärna båda.",
       ],
-      ["Vad händer efter provperioden?", "Ingenting dras automatiskt. Vill du fortsätta köper du timmar, som ett kontantkort. De går aldrig ut."],
+      ["Vad händer efter de 20 gratisminuterna?", "Ingenting dras automatiskt. Vill du fortsätta fyller du på saldo, som ett kontantkort. Det går aldrig ut."],
     ],
     closing: "Nästa viktiga samtal kan bli ditt bästa.",
     otherLangs: "Andra språk",
@@ -109,12 +108,12 @@ export const LANDING: Record<UiLang, LandingCopy> = {
   da: {
     title: "Whisper – AI-assistent til møder, fremlæggelser og noter",
     description:
-      "Whisper følger dine samtaler, tager noter live og har dit eget materiale klar. Ét tryk giver dig et kort stikord ud fra samtalen og dine dokumenter. Få referat og påmindelser bagefter. Prøv gratis i 2 dage.",
+      "Whisper følger dine samtaler, tager noter live og har dit eget materiale klar. Ét tryk giver dig et kort stikord ud fra samtalen og dine dokumenter. Få referat og påmindelser bagefter. Prøv 20 minutter gratis.",
     kicker: "AI-assistent til samtaler",
     h1: "Din AI-assistent i hver samtale",
     lead: "Whisper følger samtalen sammen med dig. Den tager noter live, har dine egne dokumenter, links og din kode klar, og med ét tryk får du et kort stikord om det, der er vigtigt lige nu. Bagefter får du et referat med påmindelser.",
     cta: "Prøv gratis",
-    ctaNote: "2 dage gratis · intet kort nødvendigt",
+    ctaNote: "20 minutter gratis · intet kort nødvendigt",
     whyKicker: "Hvorfor Aivia?",
     whyQuote: "ChatGPT er en hjerne, du skal gå hen til. Aivia er ørerne, der allerede er på plads.",
     whyLead:
@@ -150,13 +149,12 @@ export const LANDING: Record<UiLang, LandingCopy> = {
     ],
     pricesTitle: "Priser",
     prices: [
-      { name: "Prøveperiode", price: "0 kr", note: "2 dage eller 3 timer. Intet kort." },
-      { name: "5 timer", price: "35 kr", note: "Nok til et par møder eller fremlæggelser." },
-      { name: "15 timer", price: "85 kr", note: "Mest populær. Rækker langt til job, møder og studier." },
-      { name: "40 timer", price: "179 kr", note: "Bedste pris pr. time." },
+      { name: "Prøv gratis", price: "0 kr", note: "20 minutter, svar er inkluderet. Intet kort." },
+      { name: "Lyt", price: "7 øre/min", note: "Kun når nogen taler. En times forelæsning koster omkring 3 kr." },
+      { name: "Svar", price: "35 øre", note: "Hver gang du trykker og får et svar. En jobsamtale koster ofte 10–15 kr." },
     ],
     pricesNote:
-      "Som et taletidskort: timerne tælles kun ned, når Aivia lytter, og udløber aldrig. Intet abonnement. Priser inkl. moms.",
+      "Fyld op med 35, 70 eller 175 kr, som et taletidskort. Saldoen udløber aldrig, intet abonnement og intet trækkes automatisk. Priser inkl. moms.",
     faqTitle: "Ofte stillede spørgsmål",
     faq: [
       ["Skal jeg downloade noget?", "Nej. Whisper kører i browseren. På iPhone trykker du Del → Føj til hjemmeskærm, så virker den som en app."],
@@ -167,7 +165,7 @@ export const LANDING: Record<UiLang, LandingCopy> = {
         "Hvorfor ikke bare bruge ChatGPT eller Gemini?",
         "De er gode hjerner, men de ved kun det, du skriver ind, og du skal stoppe op og spørge. Aivia har allerede hørt samtalen, giver dig et kort stikord, når du trykker, og foreslår selv tidspunkter og påmindelser ud fra det, hun har hørt. Brug gerne begge.",
       ],
-      ["Hvad sker der efter prøveperioden?", "Der trækkes ikke noget automatisk. Vil du fortsætte, køber du timer, som et taletidskort. De udløber aldrig."],
+      ["Hvad sker der efter de 20 gratis minutter?", "Der trækkes ikke noget automatisk. Vil du fortsætte, fylder du saldo på, som et taletidskort. Den udløber aldrig."],
     ],
     closing: "Din næste vigtige samtale kan blive din bedste.",
     otherLangs: "Andre sprog",
@@ -177,12 +175,12 @@ export const LANDING: Record<UiLang, LandingCopy> = {
   en: {
     title: "Whisper – AI assistant for meetings, presentations and notes",
     description:
-      "Whisper follows your conversations, takes live notes and keeps your own material at hand. One tap gives you a short hint based on the conversation and your documents. Get a summary and reminders afterwards. Try free for 2 days.",
+      "Whisper follows your conversations, takes live notes and keeps your own material at hand. One tap gives you a short hint based on the conversation and your documents. Get a summary and reminders afterwards. Try 20 minutes free.",
     kicker: "AI assistant for conversations",
     h1: "Your AI assistant for every conversation",
     lead: "Whisper follows the conversation with you. It takes live notes, keeps your own documents, links and code at hand, and with one tap gives you a short hint about what matters right now. Afterwards you get a summary with reminders.",
     cta: "Try it free",
-    ctaNote: "2 days free · no card needed",
+    ctaNote: "20 minutes free · no card needed",
     whyKicker: "Why Aivia?",
     whyQuote: "ChatGPT is a brain you have to go to. Aivia is the ears that are already there.",
     whyLead:
@@ -218,12 +216,12 @@ export const LANDING: Record<UiLang, LandingCopy> = {
     ],
     pricesTitle: "Pricing",
     prices: [
-      { name: "Free trial", price: "0 kr", note: "2 days or 3 hours. No card." },
-      { name: "5 hours", price: "49 SEK / 35 DKK", note: "Enough for a few meetings or presentations." },
-      { name: "15 hours", price: "119 SEK / 85 DKK", note: "Most popular. Goes a long way for work, meetings and study." },
-      { name: "40 hours", price: "249 SEK / 179 DKK", note: "Best price per hour." },
+      { name: "Try it free", price: "0 kr", note: "20 minutes, answers included. No card." },
+      { name: "Listening", price: "0.10 SEK / min", note: "Only while someone talks (0.07 DKK). An hour-long lecture costs about 4 SEK." },
+      { name: "Answers", price: "0.50 SEK", note: "Each time you tap and get an answer (0.35 DKK). A job interview often costs 15–20 SEK." },
     ],
-    pricesNote: "Like a prepaid card: hours only count down while Aivia listens and never expire. No subscription. Prices include VAT.",
+    pricesNote:
+      "Top up 50, 100 or 250 SEK (35, 70 or 175 DKK), like a prepaid card. The balance never expires, no subscription, nothing charged automatically. Prices include VAT.",
     faqTitle: "FAQ",
     faq: [
       ["Do I need to download anything?", "No. Whisper runs in the browser. On iPhone tap Share → Add to Home Screen and it works like an app."],
@@ -234,7 +232,7 @@ export const LANDING: Record<UiLang, LandingCopy> = {
         "Why not just use ChatGPT or Gemini?",
         "They are great brains, but they only know what you type in, and you have to stop and ask. Aivia already heard the conversation, gives you a short hint when you tap, and suggests times and reminders from what she heard. Feel free to use both.",
       ],
-      ["What happens after the trial?", "Nothing is charged automatically. To continue, buy hours like a prepaid card. They never expire."],
+      ["What happens after the 20 free minutes?", "Nothing is charged automatically. To continue, top up your balance like a prepaid card. It never expires."],
     ],
     closing: "Your next important conversation can be your best one.",
     otherLangs: "Other languages",

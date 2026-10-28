@@ -1,6 +1,6 @@
 import { handleWebhook, verifyWebhook } from "@/lib/server/billing";
 
-/** Stripe calls this after payments and subscription changes. */
+/** Stripe calls this after payments. */
 export async function POST(req: Request) {
   const body = await req.text();
   if (!verifyWebhook(body, req.headers.get("stripe-signature"))) {

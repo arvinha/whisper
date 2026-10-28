@@ -1,29 +1,24 @@
 "use client";
 
 import { useState, type FormEvent, type ReactNode } from "react";
-import { useNow } from "@/lib/client/agenda";
 import { ApiError } from "@/lib/client/api";
 import { getEngine } from "@/lib/client/engine";
 import { useT, useUiLang } from "@/lib/client/i18n";
 import type { Dict } from "@/lib/i18n";
-import type { AccountInfo, AuthProvider, CheckoutKind, PackKind, PublicConfig } from "@/lib/shared/types";
+import {
+  ANSWER_ORE,
+  LISTEN_ORE_PER_MINUTE,
+  TOPUPS,
+  TOPUP_KINDS,
+  TRIAL_MINUTES,
+  oreToKr,
+  type Currency,
+} from "@/lib/shared/pricing";
+import type { AccountInfo, AuthProvider, CheckoutKind, PublicConfig } from "@/lib/shared/types";
 import { PasswordForm } from "./PasswordForm";
 
-const HOUR_MS = 3_600_000;
-const DAY_MS = 24 * HOUR_MS;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
-
-/** Shown prices, VAT included. Must match PRICES in the server's billing.ts. */
-const PRICES: Record<"sek" | "dkk", Record<CheckoutKind, number>> = {
-  sek: { pack5: 49, pack15: 119, pack40: 249, student: 59, termin: 249, pro: 129, extra: 49 },
-  dkk: { pack5: 35, pack15: 85, pack40: 179, student: 39, termin: 169, pro: 89, extra: 35 },
-};
-const PACKS: Array<{ kind: PackKind; hours: number }> = [
-  { kind: "pack5", hours: 5 },
-  { kind: "pack15", hours: 15 },
-  { kind: "pack40", hours: 40 },
-];
-const POPULAR: PackKind = "pack15";
+const POPULAR: CheckoutKind = "kr100";
 
 const input =
   "w-full rounded-xl border border-white/10 bg-white/5 px-3.5 py-2.5 text-base outline-none focus:border-violet-400/60";
@@ -384,45 +379,45 @@ export function AuthScreen({ config }: { config: PublicConfig }) {
   );
 }
 
-function hours(seconds: number, locale: string): string {
-  return new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(seconds / 3600);
+/** The account's currency, or the UI language's before the first top-up. */
+export function accountCurrency(account: AccountInfo, lang: string): Currency {
+  return account.currency ?? (lang === "da" ? "dkk" : "sek");
 }
 
-function dateLabel(iso: string, locale: string): string {
-  return new Date(iso).toLocaleDateString(locale, { day: "numeric", month: "long", year: "numeric" });
+/** An amount in Swedish öre, shown in the account's currency: "43,20 kr" or "10 öre". */
+export function formatMoney(ore: number, currency: Currency, t: Dict): string {
+  const kr = oreToKr(ore, currency);
+  if (kr > 0 && kr < 1) return t.account.ore(Math.round(kr * 100));
+  const whole = Math.abs(kr - Math.round(kr)) < 0.005;
+  return `${new Intl.NumberFormat(t.locale, { minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: 2 }).format(kr)} kr`;
 }
 
-function statusLine(a: AccountInfo, now: number, t: Dict): string {
+export function trialMinutesLeft(account: AccountInfo): number {
+  return Math.max(1, Math.ceil(account.trialSecondsLeft / 60));
+}
+
+function statusLine(a: AccountInfo, currency: Currency, t: Dict): string {
   if (!a.active) {
-    if (a.reason === "quota") return a.plan === "trial" ? t.account.trialQuota : t.account.quota;
-    if (a.reason === "expired") return t.account.expired;
     if (a.reason === "empty") return t.account.empty;
     return a.trialDenied ? t.account.trialDenied : t.account.trialOver;
   }
-  if (a.plan === "prepaid") return t.account.balance(hours(a.extraSeconds, t.locale));
-  if (a.plan === "trial") {
-    const left = Date.parse(a.trialEndsAt) - (now || Date.parse(a.trialEndsAt));
-    if (left < DAY_MS) return t.account.trialHoursLeft(Math.max(1, Math.ceil(left / HOUR_MS)));
-    return t.account.trialLeft(Math.max(1, Math.ceil((left - HOUR_MS) / DAY_MS)));
-  }
-  if (!a.paidUntil) return "";
-  const date = dateLabel(a.paidUntil, t.locale);
-  return a.subscribed && !a.cancelAtPeriodEnd ? t.account.renews(date) : t.account.endsOn(date);
+  const balance = t.account.balance(formatMoney(a.balanceOre, currency, t));
+  if (a.plan === "prepaid") return balance;
+  const minutes = t.account.trialMinutesLeft(trialMinutesLeft(a));
+  return a.balanceOre > 0 ? `${minutes} · ${balance}` : minutes;
 }
 
-/** Plan, hours used and the ways to pay. */
+/** Free minutes, balance and the ways to top up. */
 export function AccountPanel({ config, account }: { config: PublicConfig; account: AccountInfo }) {
   const t = useT();
   const lang = useUiLang();
-  const now = useNow();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [upgrading, setUpgrading] = useState(false);
-  const prices = PRICES[lang === "da" ? "dkk" : "sek"];
-  // No prices while the free trial runs unless the user asks for them; they appear when it is over.
+  const currency = accountCurrency(account, lang);
+  // No prices while the free minutes last unless the user asks for them; they appear when they are over.
   const inTrial = account.plan === "trial" && account.active;
   const billing = config.accounts.billing && (!inTrial || upgrading);
-  const paid = (account.plan === "student" || account.plan === "pro") && account.reason !== "expired";
 
   const go = async (key: string, action: () => Promise<void>) => {
     setBusy(key);
@@ -435,11 +430,8 @@ export function AccountPanel({ config, account }: { config: PublicConfig; accoun
     }
   };
 
-  const used = Math.min(account.usedSeconds, account.limitSeconds);
-  const share = account.limitSeconds ? Math.min(1, used / account.limitSeconds) : 1;
-  const currency = lang === "da" ? "dkk" : "sek";
-  const perHour = (kind: PackKind, h: number) =>
-    new Intl.NumberFormat(t.locale, { maximumFractionDigits: 1 }).format(PRICES[currency][kind] / h);
+  const share = inTrial ? Math.min(1, 1 - account.trialSecondsLeft / (TRIAL_MINUTES * 60)) : 0;
+  const rates = t.account.rates(formatMoney(LISTEN_ORE_PER_MINUTE, currency, t), formatMoney(ANSWER_ORE, currency, t));
 
   return (
     <div className="space-y-4 text-sm">
@@ -448,22 +440,16 @@ export function AccountPanel({ config, account }: { config: PublicConfig; accoun
           <span className="font-medium text-zinc-100">{t.account.planName[account.plan]}</span>
           <span className="truncate text-xs text-zinc-500">{account.email}</span>
         </div>
-        <p className={`mt-0.5 ${account.active ? "text-zinc-400" : "text-rose-300"}`}>{statusLine(account, now, t)}</p>
+        <p className={`mt-0.5 ${account.active ? "text-zinc-400" : "text-rose-300"}`}>{statusLine(account, currency, t)}</p>
+        <p className="mt-0.5 text-xs text-zinc-500">{rates}</p>
       </div>
 
-      {account.limitSeconds > 0 && (
-        <div>
-          <div className="h-2 overflow-hidden rounded-full bg-white/10">
-            <div
-              className={`h-full rounded-full ${share >= 1 ? "bg-rose-400" : share > 0.8 ? "bg-amber-400" : "bg-violet-400"}`}
-              style={{ width: `${Math.max(2, share * 100)}%` }}
-            />
-          </div>
-          <p className="mt-1.5 text-xs text-zinc-400">
-            {t.account.usage(hours(used, t.locale), hours(account.limitSeconds, t.locale))}
-            {paid ? t.account.thisMonth : ""}
-            {account.extraSeconds > 0 ? ` · ${t.account.extra(hours(account.extraSeconds, t.locale))}` : ""}
-          </p>
+      {inTrial && (
+        <div className="h-2 overflow-hidden rounded-full bg-white/10">
+          <div
+            className={`h-full rounded-full ${share > 0.8 ? "bg-amber-400" : "bg-violet-400"}`}
+            style={{ width: `${Math.max(2, share * 100)}%` }}
+          />
         </div>
       )}
 
@@ -488,7 +474,7 @@ export function AccountPanel({ config, account }: { config: PublicConfig; accoun
               {t.account.packsNote}
               {inTrial && ` ${t.account.upgradeNote}`}
             </p>
-            {PACKS.map(({ kind, hours: h }) => (
+            {TOPUP_KINDS.map((kind) => (
               <div
                 key={kind}
                 className={`flex items-center gap-3 rounded-xl border p-3 ${
@@ -497,16 +483,14 @@ export function AccountPanel({ config, account }: { config: PublicConfig; accoun
               >
                 <div className="min-w-0 flex-1">
                   <p className="font-medium text-zinc-100">
-                    {t.account.packTitle(h)} <span className="font-normal text-violet-200">{prices[kind]} kr</span>
+                    {TOPUPS[kind][currency]} kr
                     {kind === POPULAR && (
                       <span className="ml-2 rounded-full bg-violet-500/30 px-2 py-0.5 text-[11px] font-medium text-violet-100">
                         {t.account.popular}
                       </span>
                     )}
                   </p>
-                  <p className="text-xs text-zinc-400">
-                    {t.account.packDesc[kind]} · {t.account.perHour(perHour(kind, h))}
-                  </p>
+                  <p className="text-xs text-zinc-400">{t.account.packDesc[kind]}</p>
                 </div>
                 <button
                   type="button"

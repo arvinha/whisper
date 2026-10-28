@@ -369,7 +369,20 @@ export class Engine {
     }
   }
 
-  /** Fetches the config again without showing a loading state, e.g. to update used hours. */
+  /** Charges an answer the user asked for, in the background so the answer is never held up. */
+  private chargeAnswer() {
+    const config = this.state.config;
+    if (!config?.account) return;
+    this.api.answered().then(
+      ({ account }) => {
+        const current = this.state.config;
+        if (account && current) this.set({ config: { ...current, account } });
+      },
+      () => {},
+    );
+  }
+
+  /** Fetches the config again without showing a loading state, e.g. to update the balance. */
   async refreshConfig(): Promise<PublicConfig | null> {
     try {
       const config = await this.api.config();
@@ -445,9 +458,7 @@ export class Engine {
     const t = getT();
     if (!config) return configError ?? t.errors.loadingConfig;
     if (config.passwordRequired && !config.authorized) return t.errors.enterCode;
-    if (config.account && !config.account.active) {
-      return config.account.reason === "quota" ? t.errors.quotaExceeded : t.errors.planRequired;
-    }
+    if (config.account && !config.account.active) return t.errors.planRequired;
     if (!config.llm) return config.problems.join(" ") || t.errors.noLlm;
     if (mode === "mic" && !config.stt) {
       return config.problems.join(" ") || t.errors.noStt;
@@ -1460,6 +1471,7 @@ export class Engine {
     this.detail = null;
     this.answerBasisId = basisId;
     this.set({ current: view, history: [view, ...this.state.history].slice(0, HISTORY_SIZE) });
+    this.chargeAnswer();
     const started = prefetched ? (p?.deep ?? null) : early;
     // The early answer had no web search; one that needs the internet starts again with it.
     const usable = started && !(view.live && started === early) ? started : null;

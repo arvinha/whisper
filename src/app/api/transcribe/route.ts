@@ -1,4 +1,4 @@
-import { recordUsage } from "@/lib/server/accounts";
+import { recordListening } from "@/lib/server/accounts";
 import { requireAccess } from "@/lib/server/auth";
 import { getServerConfig } from "@/lib/server/config";
 import { AppError, errorResponse, json, requestSignal } from "@/lib/server/errors";
@@ -43,7 +43,7 @@ export async function POST(req: Request) {
       prompt: typeof prompt === "string" ? prompt : undefined,
       signal: requestSignal(req, 25_000),
     });
-    if (caller.account) await recordUsage(caller.account.id, await wavSeconds(audio));
+    if (caller.account) await recordListening(caller.account.id, await wavSeconds(audio));
     return json({ text, ms: Date.now() - started } satisfies TranscribeResult);
   } catch (err) {
     return errorResponse(err);

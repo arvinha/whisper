@@ -154,7 +154,7 @@ export function Landing({ lang }: { lang: UiLang }) {
 
         <section className="py-10" id="priser">
           <h2 className="text-center text-3xl font-semibold tracking-tight">{copy.pricesTitle}</h2>
-          <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mt-8 grid gap-4 sm:grid-cols-3">
             {copy.prices.map((plan, i) => (
               <div
                 key={plan.name}

@@ -8,17 +8,17 @@ export const OG_TEXT: Record<UiLang, { alt: string; tagline: string; uses: strin
   sv: {
     alt: "Whisper, AI-assistent för samtal",
     tagline: "Din AI-assistent i varje samtal",
-    uses: "Möten · Redovisningar · Plugg · 2 dagar gratis",
+    uses: "Möten · Redovisningar · Plugg · 20 min gratis",
   },
   da: {
     alt: "Whisper, AI-assistent til samtaler",
     tagline: "Din AI-assistent i hver samtale",
-    uses: "Møder · Fremlæggelser · Studier · 2 dage gratis",
+    uses: "Møder · Fremlæggelser · Studier · 20 min. gratis",
   },
   en: {
     alt: "Whisper, an AI assistant for conversations",
     tagline: "Your AI assistant for every conversation",
-    uses: "Meetings · Presentations · Notes · 2 days free",
+    uses: "Meetings · Presentations · Notes · 20 min free",
   },
 };
 

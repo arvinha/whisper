@@ -154,26 +154,27 @@ Sätt att logga in (den som loggar in första gången får ett konto):
 - **Google / Apple / Facebook / Microsoft:** knapparna syns när nycklarna finns i `.env.local` (se `.env.example`). Omdirigeringsadressen är `https://whisper.teknikfix.dk/api/auth/<google|apple|facebook|microsoft>/callback`. Integritetspolicyn som Google, Apple och Facebook frågar efter ligger på `https://whisper.teknikfix.dk/integritet`.
 - **Familjekoder** (`APP_USERS`) fungerar som förut under "Jag har en kod".
 
-Provperioden kräver inget kort, och inga priser visas förrän den är slut. Samma person får inte en ny provperiod genom att göra nya konton: den kopplas till e-postadressen (utan `+tillägg`, och för Gmail utan punkter), till telefonen (ett slumpat id i appen) och högst 3 nya provperioder per nätverk och vecka. Tillfälliga engångsadresser (mailinator m.fl.) stoppas. Ett konto som inte får provperiod kan ändå betala direkt.
+Kunden betalar för det den använder, från ett saldo som fylls på som ett kontantkort (priser i `src/lib/shared/pricing.ts`, inkl. moms):
 
-| Plan | Pris (SEK / DKK) | Ingår |
+| | SEK | DKK |
 | --- | --- | --- |
-| Provperiod | gratis, inget kort | 2 dygn, max 3 timmar |
-| Student | 59 / 39 kr i månaden | 12 timmar/månad, kräver skolmejl |
-| Student – termin | 249 / 169 kr en gång | Student i 5 månader |
-| Pro | 129 / 89 kr i månaden | 25 timmar/månad |
-| 10 timmar extra | 49 / 35 kr | går aldrig ut |
+| Gratis test | 20 minuter, svar ingår (högst 40 svar) | samma |
+| Lyssna | 10 öre per minut tal | 7 øre |
+| Svar | 50 öre per tryck som ger ett svar | 35 øre |
+| Fyll på | 50 / 100 / 250 kr | 35 / 70 / 175 kr |
 
-Timmarna räknas på ljudet som skickas till taligenkänningen. Familjekoderna (`APP_USERS`) och `APP_PASSWORD` har ingen gräns.
+Saldot sparas i svenska öre och visas i DKK för den som betalat i DKK. Minuterna räknas på ljudet som skickas till taligenkänningen, så tystnad kostar inget. Svaret dras när appen visar ett svar efter ett tryck, inte för förberedda svar i bakgrunden. Familjekoderna (`APP_USERS`) och `APP_PASSWORD` har ingen gräns.
+
+Gratisminuterna kräver inget kort, och inga priser visas förrän de är slut. Alla konton tillsammans får högst `TRIAL_DAILY_HOURS` (10) gratistimmar per dygn. Samma person får inte nya gratisminuter genom att göra nya konton: de kopplas till e-postadressen (utan `+tillägg`, och för Gmail utan punkter), till telefonen (ett slumpat id i appen) och högst 3 nya per nätverk och vecka. Tillfälliga engångsadresser (mailinator m.fl.) stoppas. Ett konto som inte får gratisminuter kan ändå fylla på direkt.
 
 Så slår du på betalningen:
 
-1. Lägg in `STRIPE_SECRET_KEY` i `.env.local` (börja med en testnyckel `sk_test_...`). Priserna skapas automatiskt i Stripe första gången någon väljer en plan.
-2. Stripe → Developers → Webhooks → lägg till `https://whisper.teknikfix.dk/api/stripe/webhook` med händelserna `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`. Kopiera *Signing secret* till `STRIPE_WEBHOOK_SECRET`.
-3. Stripe → Settings → Billing → Customer portal: slå på den (kunderna byter kort, ser kvitton och säger upp där).
+1. Lägg in `STRIPE_SECRET_KEY` i `.env.local` (börja med en testnyckel `sk_test_...`). Priserna skapas automatiskt i Stripe första gången någon fyller på.
+2. Stripe → Developers → Webhooks → lägg till `https://whisper.teknikfix.dk/api/stripe/webhook` med händelserna `checkout.session.completed` och `checkout.session.async_payment_succeeded`. Kopiera *Signing secret* till `STRIPE_WEBHOOK_SECRET`.
+3. Stripe → Settings → Billing → Customer portal: slå på den (kunderna ser sina kvitton där).
 4. Starta om `run-whisper.bat`.
 
-Glömt lösenord sköter kunden själv med en kod på mejlen. Vill du ändå sätta ett lösenord åt någon: `node scripts/reset-password.mjs kund@mail.se NyttLosen123`. Planen och timmarna finns kvar.
+Glömt lösenord sköter kunden själv med en kod på mejlen. Vill du ändå sätta ett lösenord åt någon: `node scripts/reset-password.mjs kund@mail.se NyttLosen123`. Saldot och gratisminuterna finns kvar.
 
 Påminnelser-appen på iPhone: webbappar får inte skriva där direkt, så knappen **Påminnelser** i Sammanfatta kör genvägen "Whisper påminnelse". Bygg den en gång i Genvägar-appen (stegen visas i appen), dela den (Dela → Kopiera iCloud-länk) och lägg länken i `REMINDERS_SHORTCUT_URL`, så får kunderna en "Hämta genvägen"-knapp.
 

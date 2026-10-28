@@ -1,4 +1,5 @@
 import type {
+  AccountInfo,
   AnswerRequest,
   AnswerResult,
   ApiErrorBody,
@@ -36,8 +37,6 @@ function userMessage(code: ErrorCode, serverMessage: string | undefined, retryAf
       return t.errors.generic;
     case "plan_required":
       return t.errors.planRequired;
-    case "quota_exceeded":
-      return t.errors.quotaExceeded;
     case "trial_busy":
       return t.errors.trialBusy;
   }
@@ -67,9 +66,9 @@ export class ApiError extends Error {
     );
   }
 
-  /** The account's trial, plan or hours have run out. */
+  /** The account's free minutes or balance have run out. */
   get isPlanError(): boolean {
-    return this.code === "plan_required" || this.code === "quota_exceeded" || this.code === "trial_busy";
+    return this.code === "plan_required" || this.code === "trial_busy";
   }
 }
 
@@ -250,9 +249,14 @@ export class Api {
     return this.postJson<{ url: string }>("/api/account/checkout", { kind }, this.getPassword());
   }
 
-  /** Stripe's page for changing card, plan, receipts or cancelling. */
+  /** Stripe's page with receipts for earlier top-ups. */
   async portal(): Promise<{ url: string }> {
     return this.postJson<{ url: string }>("/api/account/portal", {}, this.getPassword());
+  }
+
+  /** Charges one answer the user asked for; returns the account afterwards. */
+  async answered(): Promise<{ account: AccountInfo | null }> {
+    return this.postJson<{ account: AccountInfo | null }>("/api/account/answered", {}, this.getPassword());
   }
 
   private async postJson<T>(path: string, body: unknown, password: string): Promise<T> {

@@ -54,13 +54,12 @@ export interface PublicConfig {
 }
 
 export type AuthProvider = "google" | "apple" | "microsoft" | "facebook";
-/** "prepaid": listening on bought hours (a top-up card), without a subscription. */
-export type Plan = "trial" | "student" | "pro" | "prepaid" | "none";
-/** "empty": the bought hours are used up. */
-export type AccountReason = "" | "trial_over" | "expired" | "quota" | "empty";
-/** Top-up packs; the subscriptions are kept for accounts that already have one. */
-export type PackKind = "pack5" | "pack15" | "pack40";
-export type CheckoutKind = PackKind | "student" | "termin" | "pro" | "extra";
+/** "trial": free minutes left; "prepaid": paying from a bought balance. */
+export type Plan = "trial" | "prepaid";
+/** "empty": the bought balance is used up. */
+export type AccountReason = "" | "trial_over" | "empty";
+/** Top-ups of the balance, see TOPUPS in shared/pricing.ts. */
+export type CheckoutKind = "kr50" | "kr100" | "kr250";
 
 export interface AccountInfo {
   email: string;
@@ -69,20 +68,16 @@ export interface AccountInfo {
   active: boolean;
   /** Why the account cannot listen right now. */
   reason: AccountReason;
-  usedSeconds: number;
-  limitSeconds: number;
-  extraSeconds: number;
-  trialEndsAt: string;
+  /** Free listening left, in seconds of speech. */
+  trialSecondsLeft: number;
+  /** Bought balance in Swedish öre. */
+  balanceOre: number;
+  /** The currency of the first top-up, or null before one. */
+  currency: "sek" | "dkk" | null;
   /** No trial: the e-mail address, phone or network already had one. */
   trialDenied: boolean;
-  paidUntil: string | null;
-  /** A running monthly subscription (renews by itself). */
-  subscribed: boolean;
-  cancelAtPeriodEnd: boolean;
-  /** Has a Stripe customer, so the billing portal can open. */
+  /** Has a Stripe customer, so receipts can be shown. */
   hasBilling: boolean;
-  /** The e-mail is a school address, so student prices apply. */
-  student: boolean;
 }
 
 export interface AuthResult {
@@ -284,7 +279,6 @@ export type ErrorCode =
   | "network"
   | "internal"
   | "plan_required"
-  | "quota_exceeded"
   | "trial_busy";
 
 export interface ApiErrorBody {

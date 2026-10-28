@@ -63,18 +63,16 @@ export async function requireAuth(req: Request, config: ServerConfig): Promise<C
   return caller;
 }
 
-/** Like requireAuth, but an account must also have an active plan with hours left. */
+/** Like requireAuth, but an account must also have free minutes or balance left. */
 export async function requireAccess(req: Request, config: ServerConfig): Promise<Caller> {
   const caller = await requireAuth(req, config);
   if (caller.account) {
     const access = accessOf(caller.account);
     if (!access.active) {
-      throw access.reason === "quota"
-        ? new AppError(402, "quota_exceeded", "Timmarna är slut. Köp 10 timmar till eller vänta till nästa månad.")
-        : new AppError(402, "plan_required", "Fyll på timmar för att fortsätta använda Whisper.");
+      throw new AppError(402, "plan_required", "Fyll på saldot för att fortsätta använda Whisper.");
     }
     if (access.plan === "trial" && !(await trialBudgetOpen())) {
-      throw new AppError(429, "trial_busy", "Dagens gratistimmar är slut. Försök igen i morgon eller fyll på timmar.");
+      throw new AppError(429, "trial_busy", "Dagens gratisminuter är slut. Försök igen i morgon eller fyll på saldot.");
     }
   }
   return caller;

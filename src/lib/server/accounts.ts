@@ -2,17 +2,16 @@ import { createHash, createHmac, randomBytes, randomInt, randomUUID, scrypt, tim
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
+import { ANSWER_ORE, LISTEN_ORE_PER_MINUTE, TRIAL_MINUTES, type Currency } from "@/lib/shared/pricing";
 import type { AccountInfo, AccountReason, AuthProvider, Plan } from "@/lib/shared/types";
 import disposableDomains from "./disposable-domains.json";
 import { AppError } from "./errors";
 
 const scryptAsync = promisify(scrypt) as (password: string, salt: Buffer, keylen: number) => Promise<Buffer>;
 
-export const TRIAL_DAYS = 2;
-export const PLAN_HOURS: Record<Plan, number> = { trial: 3, student: 12, pro: 25, prepaid: 0, none: 0 };
-export const EXTRA_SECONDS = 10 * 3600;
-/** Keeps access a few days after a failed renewal while Stripe retries the card. */
-export const GRACE_DAYS = 3;
+const TRIAL_SECONDS = TRIAL_MINUTES * 60;
+/** Answers are free in the trial, up to this many, so one trial has a known worst-case cost. */
+const TRIAL_MAX_ANSWERS = 40;
 const TOKEN_DAYS = 180;
 const DAY_MS = 86_400_000;
 
@@ -27,22 +26,18 @@ export interface Account {
   /** Subject ids from Google/Apple/Microsoft sign-in. */
   providers?: Partial<Record<Provider, string>>;
   createdAt: string;
-  trialEndsAt: string;
   /** This e-mail address, device or network already had a trial, so this account got none. */
   trialDenied?: boolean;
-  plan: Plan;
-  /** Paid access lasts until this time (subscription period end plus grace, or end of a term pass). */
-  paidUntil: string | null;
-  stripeCustomerId: string | null;
-  stripeSubscriptionId: string | null;
-  cancelAtPeriodEnd: boolean;
-  /** "YYYY-MM" the counter below belongs to. */
-  usageMonth: string;
-  usedSeconds: number;
+  /** Seconds of speech listened to on the free minutes. */
   trialUsedSeconds: number;
-  /** Bought time (the top-up card); used after the plan's or trial's own hours, and never expires. */
-  extraSeconds: number;
-  /** Has bought hours at least once, so an empty card says "top up" rather than "trial over". */
+  /** Answers given on the free minutes. */
+  trialAnswers: number;
+  /** Bought balance in Swedish öre; used after the free minutes, and never expires. */
+  balanceOre: number;
+  /** The currency of the first top-up, so the balance is shown in it. */
+  currency?: Currency;
+  stripeCustomerId: string | null;
+  /** Has topped up at least once, so an empty balance says "top up" rather than "trial over". */
   toppedUp?: boolean;
 }
 
@@ -96,12 +91,20 @@ function storePath(): string {
   return path.join(env("DATA_DIR") || path.join(process.cwd(), "data"), "accounts.json");
 }
 
+/** Accounts saved before pay-as-you-go have no balance or trial answer counter. */
+function withDefaults(a: Account): Account {
+  a.trialUsedSeconds ??= 0;
+  a.trialAnswers ??= 0;
+  a.balanceOre ??= 0;
+  return a;
+}
+
 async function readStore(): Promise<Store> {
   try {
     const data = JSON.parse(await fs.readFile(storePath(), "utf8")) as Partial<Store>;
     const list = <T>(value: T[] | undefined): T[] => (Array.isArray(value) ? value : []);
     return {
-      accounts: list(data.accounts),
+      accounts: list(data.accounts).map(withDefaults),
       events: list(data.events),
       codes: list(data.codes),
       trials: list(data.trials),
@@ -206,31 +209,6 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 export function normalizeEmail(email: unknown): string {
   return typeof email === "string" ? email.trim().toLowerCase().slice(0, 160) : "";
-}
-
-const STUDENT_DOMAINS = [
-  // Denmark
-  "ku.dk", "au.dk", "aau.dk", "sdu.dk", "dtu.dk", "cbs.dk", "ruc.dk", "itu.dk", "via.dk", "ucn.dk", "kp.dk", "phabsalon.dk",
-  "ucl.dk", "eaaa.dk", "easj.dk", "zealand.dk", "kea.dk", "cphbusiness.dk", "ucsyd.dk", "eal.dk", "dania.dk", "kadk.dk",
-  // Sweden
-  "kth.se", "su.se", "lu.se", "uu.se", "gu.se", "chalmers.se", "liu.se", "umu.se", "ltu.se", "mau.se", "miun.se", "kau.se",
-  "oru.se", "lnu.se", "hb.se", "hh.se", "hig.se", "his.se", "hj.se", "hkr.se", "hv.se", "mdu.se", "sh.se", "bth.se", "du.se",
-  "slu.se", "ki.se", "hhs.se", "konstfack.se", "kmh.se", "gih.se", "fhs.se", "nordakademi.se",
-  // Norway
-  "uio.no", "ntnu.no", "uib.no", "uit.no", "oslomet.no", "bi.no", "nmbu.no", "usn.no", "hvl.no", "uia.no", "nord.no",
-];
-
-/** School and university addresses, for the student price. */
-export function isStudentEmail(email: string): boolean {
-  const domain = email.split("@")[1] ?? "";
-  if (!domain) return false;
-  if (domain.endsWith(".edu") || /(^|\.)(student|stud|elev|edu)\./.test(domain)) return true;
-  return STUDENT_DOMAINS.some((d) => domain === d || domain.endsWith(`.${d}`));
-}
-
-function monthKey(at = Date.now()): string {
-  const d = new Date(at);
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
 // ---- one trial per person ----------------------------------------------------------------------
@@ -339,17 +317,11 @@ function newAccount(store: Store, email: string, name: string, origin: Origin): 
     name,
     passwordHash: "",
     createdAt: new Date(now).toISOString(),
-    trialEndsAt: new Date(trial ? now + TRIAL_DAYS * DAY_MS : now).toISOString(),
     ...(trial ? {} : { trialDenied: true }),
-    plan: "trial",
-    paidUntil: null,
-    stripeCustomerId: null,
-    stripeSubscriptionId: null,
-    cancelAtPeriodEnd: false,
-    usageMonth: monthKey(now),
-    usedSeconds: 0,
     trialUsedSeconds: 0,
-    extraSeconds: 0,
+    trialAnswers: 0,
+    balanceOre: 0,
+    stripeCustomerId: null,
   };
   store.accounts.push(account);
   return account;
@@ -489,61 +461,41 @@ export function onceForEvent(eventId: string, handle: (accounts: Account[]) => v
 
 // ---- access and usage -------------------------------------------------------------------------
 
-function paidActive(a: Account, now: number): boolean {
-  return (a.plan === "student" || a.plan === "pro") && !!a.paidUntil && Date.parse(a.paidUntil) > now;
+function trialSecondsLeft(a: Account): number {
+  return a.trialDenied ? 0 : Math.max(0, TRIAL_SECONDS - a.trialUsedSeconds);
 }
 
-function currentUsed(a: Account, now: number): number {
-  return a.usageMonth === monthKey(now) ? a.usedSeconds : 0;
+/** Free minutes left, and free answers not used up. */
+function trialOn(a: Account): boolean {
+  return trialSecondsLeft(a) > 0 && a.trialAnswers < TRIAL_MAX_ANSWERS;
 }
 
 export interface Access {
   active: boolean;
   reason: AccountReason;
-  /** The plan that counts right now: a paid plan while it lasts, otherwise the trial. */
+  /** What pays right now: the free minutes first, then the bought balance. */
   plan: Plan;
-  limitSeconds: number;
-  usedSeconds: number;
 }
 
-export function accessOf(a: Account, now = Date.now()): Access {
-  if (paidActive(a, now)) {
-    const limitSeconds = PLAN_HOURS[a.plan] * 3600;
-    const usedSeconds = currentUsed(a, now);
-    const active = usedSeconds < limitSeconds || a.extraSeconds > 0;
-    return { active, reason: active ? "" : "quota", plan: a.plan, limitSeconds, usedSeconds };
-  }
-  const limitSeconds = PLAN_HOURS.trial * 3600;
-  const trialRunning = trialOn(a, now);
-  if (trialRunning && a.trialUsedSeconds < limitSeconds) {
-    return { active: true, reason: "", plan: "trial", limitSeconds, usedSeconds: a.trialUsedSeconds };
-  }
-  if (a.extraSeconds > 0) {
-    return { active: true, reason: "", plan: "prepaid", limitSeconds: 0, usedSeconds: 0 };
-  }
-  if (a.toppedUp) return { active: false, reason: "empty", plan: "prepaid", limitSeconds: 0, usedSeconds: 0 };
-  if (a.plan !== "trial" && a.paidUntil) {
-    return { active: false, reason: "expired", plan: a.plan, limitSeconds: 0, usedSeconds: 0 };
-  }
-  if (trialRunning) return { active: false, reason: "quota", plan: "trial", limitSeconds, usedSeconds: a.trialUsedSeconds };
-  return { active: false, reason: "trial_over", plan: "trial", limitSeconds, usedSeconds: a.trialUsedSeconds };
-}
-
-function trialOn(a: Account, now: number): boolean {
-  return a.plan === "trial" && Date.parse(a.trialEndsAt) > now;
+export function accessOf(a: Account): Access {
+  if (trialOn(a)) return { active: true, reason: "", plan: "trial" };
+  if (a.balanceOre > 0) return { active: true, reason: "", plan: "prepaid" };
+  return a.toppedUp
+    ? { active: false, reason: "empty", plan: "prepaid" }
+    : { active: false, reason: "trial_over", plan: "trial" };
 }
 
 function dayKey(at = Date.now()): string {
   return new Date(at).toISOString().slice(0, 10);
 }
 
-/** Trial hours all accounts together may use per day (TRIAL_DAILY_HOURS), so free use has a known daily cost. */
+/** Free hours all accounts together may use per day (TRIAL_DAILY_HOURS), so free use has a known daily cost. */
 function trialDailySeconds(): number {
   const hours = Number(env("TRIAL_DAILY_HOURS"));
-  return (Number.isFinite(hours) && hours > 0 ? hours : 40) * 3600;
+  return (Number.isFinite(hours) && hours > 0 ? hours : 10) * 3600;
 }
 
-/** False once today's free trial hours are used up; paid and bought hours are not affected. */
+/** False once today's free minutes are used up; the bought balance is not affected. */
 export function trialBudgetOpen(): Promise<boolean> {
   return withStore((store) => {
     const usage = store.trialUsage;
@@ -551,53 +503,54 @@ export function trialBudgetOpen(): Promise<boolean> {
   }, false);
 }
 
-/** Counts listened time: the plan's or trial's own hours first, then bought hours. */
-export function recordUsage(id: string, seconds: number): Promise<Account | null> {
+/** Counts seconds of speech listened to: free minutes first, then the balance. */
+export function recordListening(id: string, seconds: number): Promise<Account | null> {
   if (!(seconds > 0)) return getAccount(id);
   return withStore((store) => {
     const a = store.accounts.find((x) => x.id === id);
     if (!a) return null;
-    const now = Date.now();
-    const paid = paidActive(a, now);
-    if (paid && a.usageMonth !== monthKey(now)) {
-      a.usageMonth = monthKey(now);
-      a.usedSeconds = 0;
+    const free = trialOn(a) ? Math.min(trialSecondsLeft(a), seconds) : 0;
+    if (free > 0) {
+      a.trialUsedSeconds += free;
+      const day = dayKey();
+      store.trialUsage = { day, seconds: (store.trialUsage?.day === day ? store.trialUsage.seconds : 0) + free };
     }
-    const trial = !paid && trialOn(a, now);
-    const limit = paid ? PLAN_HOURS[a.plan] * 3600 : trial ? PLAN_HOURS.trial * 3600 : 0;
-    const used = paid ? a.usedSeconds : a.trialUsedSeconds;
-    const fromPlan = Math.min(Math.max(0, limit - used), seconds);
-    if (paid) a.usedSeconds = used + fromPlan;
-    else if (trial) {
-      a.trialUsedSeconds = used + fromPlan;
-      const day = dayKey(now);
-      store.trialUsage = { day, seconds: (store.trialUsage?.day === day ? store.trialUsage.seconds : 0) + fromPlan };
-    }
-    a.extraSeconds = Math.max(0, a.extraSeconds - (seconds - fromPlan));
+    a.balanceOre = Math.max(0, a.balanceOre - ((seconds - free) / 60) * LISTEN_ORE_PER_MINUTE);
     return a;
   });
 }
 
+/** Counts one answer the user asked for: free in the trial, otherwise ANSWER_ORE from the balance. */
+export function recordAnswer(id: string): Promise<Account | null> {
+  return withStore((store) => {
+    const a = store.accounts.find((x) => x.id === id);
+    if (!a) return null;
+    if (trialOn(a)) a.trialAnswers += 1;
+    else a.balanceOre = Math.max(0, a.balanceOre - ANSWER_ORE);
+    return a;
+  });
+}
+
+/** Adds a paid top-up to the balance. */
+export function addBalance(a: Account, ore: number, currency: Currency): void {
+  a.balanceOre += ore;
+  a.currency ??= currency;
+  a.toppedUp = true;
+}
+
 export function accountInfo(a: Account): AccountInfo {
   const access = accessOf(a);
-  const subscribed = !!a.stripeSubscriptionId && paidActive(a, Date.now());
-  const periodEnd =
-    a.paidUntil && subscribed ? new Date(Date.parse(a.paidUntil) - GRACE_DAYS * DAY_MS).toISOString() : a.paidUntil;
   return {
     email: a.email,
     name: a.name,
     plan: access.plan,
     active: access.active,
     reason: access.reason,
-    usedSeconds: Math.round(access.usedSeconds),
-    limitSeconds: access.limitSeconds,
-    extraSeconds: Math.round(a.extraSeconds),
-    trialEndsAt: a.trialEndsAt,
+    trialSecondsLeft: trialOn(a) ? Math.round(trialSecondsLeft(a)) : 0,
+    balanceOre: Math.floor(a.balanceOre),
+    currency: a.currency ?? null,
     trialDenied: !!a.trialDenied,
-    paidUntil: periodEnd,
-    subscribed,
-    cancelAtPeriodEnd: a.cancelAtPeriodEnd,
     hasBilling: !!a.stripeCustomerId,
-    student: isStudentEmail(a.email),
   };
 }
+

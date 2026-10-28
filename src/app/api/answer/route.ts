@@ -18,7 +18,13 @@ export async function POST(req: Request) {
     const deep = request.mode === "deep";
     // Without material, the stronger model has nothing to dig through; the fast one reads the search results.
     const llm = (deep && request.context ? getDeepConfig(config) : null) ?? config.llm;
-    const result = await generateAnswer(llm, request, requestSignal(req, deep ? 50_000 : 25_000));
+    const country = (req.headers.get("cf-ipcountry") ?? "").toUpperCase();
+    const result = await generateAnswer(
+      llm,
+      request,
+      requestSignal(req, deep ? 50_000 : 25_000),
+      /^[A-Z]{2}$/.test(country) && country !== "XX" ? country : undefined,
+    );
     return json(result);
   } catch (err) {
     return errorResponse(err);

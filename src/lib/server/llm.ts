@@ -25,6 +25,10 @@ export interface ChatRequest {
   signal: AbortSignal;
   /** Lets Claude search the web this many times (billed per search). Ignored by other providers. */
   webSearches?: number;
+  /** Where the user roughly is, so searches for weather or local news find the right place. */
+  webCountry?: string;
+  /** Makes Claude search before answering, for questions only the internet can answer. */
+  mustSearch?: boolean;
 }
 
 type Body = Record<string, unknown>;
@@ -59,6 +63,7 @@ const OPTIONAL_PARAMS = [
   "thinking",
   "output_config",
   "temperature",
+  "tool_choice",
   "tools",
 ] as const;
 
@@ -110,7 +115,17 @@ function buildRequest(cfg: LlmConfig, req: ChatRequest): { url: string; headers:
           output_config: { effort: "low" },
           thinking: { type: "disabled" },
           ...(req.webSearches
-            ? { tools: [{ type: "web_search_20250305", name: "web_search", max_uses: req.webSearches }] }
+            ? {
+                tools: [
+                  {
+                    type: "web_search_20250305",
+                    name: "web_search",
+                    max_uses: req.webSearches,
+                    ...(req.webCountry ? { user_location: { type: "approximate", country: req.webCountry } } : {}),
+                  },
+                ],
+                ...(req.mustSearch ? { tool_choice: { type: "any" } } : {}),
+              }
             : {}),
         },
       };

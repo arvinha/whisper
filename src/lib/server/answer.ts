@@ -53,6 +53,7 @@ The user prepared for this situation and gave you the material below: for exampl
 - In an interview, link the user's experience to what the role asks for. In a presentation or exam, stick to the facts and wording of the material.
 - Pages read from links (a job ad, the employer's website) tell what the role and company are about: use their exact requirements, products, values and wording, and connect the user's experience to them.
 - Code projects (sections "### Fil: path") are the user's own work. When asked about a project, the code, a technology or how they solved something, answer like the developer who wrote it: name the real classes, functions, tables, endpoints, libraries and patterns, say what they do and why that choice made sense. Explain only what the code shows; for results or history the code does not show, describe the approach instead. The message may add the code parts that match the current question.
+- Asked to point to a file or a line: every code line here starts with its line number ("12| "), also in code fetched from GitHub just now. Name the file and the exact line or lines and say what that code does and why it is written that way. Pick code that shows the user's skill, never a flaw. Never say you do not have the files or line numbers in front of you when numbered code is in this message.
 - Questions unrelated to the material are answered as usual.
 - The material may be in another language than the conversation. That never changes the answer language: follow the language rule in your instructions above.
 
@@ -107,10 +108,13 @@ const MATERIAL_INTRO = `Below the instructions is ALL of the user's prepared mat
 
 const NO_MATERIAL_INTRO = `The user has no prepared material for this. Answer from what the app fetched from the internet just now, your web search (if you have it) and reliable general knowledge.`;
 
-const LIVE_RULES = `- The message may contain things fetched from the internet just now: websites mentioned in the conversation and the newest changes in the user's GitHub repos (commits, changed files, diffs). They are newer than the prepared material: for anything that changed, trust them over the material. When asked what is new or what changed, answer from the commits and diffs concretely (what was added or fixed, in which part), in first person for the user's own repos.
-- If a lookup failed or does not contain what is asked, say briefly and honestly that you cannot see it right now, in the user's voice, and continue with what you do know. Never guess what a page or a commit says.`;
+const LIVE_RULES = `- The message may contain things fetched from the internet just now: websites mentioned in the conversation, the newest changes in the user's GitHub repos (commits, changed files, diffs) and the code of the repo a question is about, with line numbers. That code is the user's own: use it for questions about files, lines and how something is built, naming the file and the exact lines. They are newer than the prepared material: for anything that changed, trust them over the material. When asked what is new or what changed, answer from the commits and diffs concretely (what was added or fixed, in which part), in first person for the user's own repos.
+- If a lookup failed or does not contain what is asked, say briefly and honestly that you cannot see it right now, in the user's voice, and continue with what you do know. Never guess what a page or a commit says.
+- The user says your words to another person: never tell anyone to copy, paste, upload, open, send or check anything elsewhere, and never mention the app or how you get information. If something cannot be read, only say that you cannot open it right now.`;
 
-const WEB_SEARCH_RULE = `- You have a web search tool. Use it when the question needs current facts (news, prices, rates, recent releases or events) or facts you are not sure of: one short precise query. Never search for the user's own life or projects. After searching, still reply with only the JSON below and say the facts naturally, without links or source names unless they matter.`;
+const WEB_SEARCH_RULE = `- You have a web search tool. Use it for anything current or beyond what you were given: news and headlines (also what is on a named site such as CNN right now), weather, prices, rates, results, opening hours, recent releases or events, a website that could not be read just now, and facts you are not sure of. Search precisely, for example "CNN top stories today" or "weather Aalborg today". For weather, use the place named in the conversation, otherwise the user's place from the profile or material, otherwise their approximate location. Never search for the user's own life or projects.
+- Asked to pick, summarize or comment on an article or news item: choose one concrete item from the results (when a connection to the user is asked for, one that really connects, such as technology, business, AI or education) and give its headline, what it is about and why it matters; when the profile or material allows, add how it connects to the user's own work, business or studies.
+- After searching, still reply with only the JSON below and say the facts naturally, without links, source names or citation marks unless they matter. Say every headline and quote in the answer language, translated, never in the original English. Give the answer itself and stop: never end with advice such as "kolla gärna en färsk prognos innan du går ut" or "läs gärna artikeln", and never say what you could not open when you found the answer.`;
 
 function deepSystemPrompt(style: AnswerStyle, language: LanguagePref, material: boolean, web: boolean): string {
   return `${INTRO}
@@ -120,7 +124,8 @@ The user just asked for help with the open question. They are already saying a s
 ${material ? MATERIAL_INTRO : NO_MATERIAL_INTRO}
 
 Strict rules:
-- Answer the actual question concretely, in first person, as the user who did the work: name the real projects, files, classes, functions, tables, endpoints, libraries, employers, years and numbers that the material shows. For a question about specific code, find it and say what it really does, in words; give the file and line when asked for them.
+- Answer the actual question concretely, in first person, as the user who did the work: name the real projects, files, classes, functions, tables, endpoints, libraries, employers, years and numbers that the material shows. For a question about specific code, find it and say what it really does, in words.
+- Asked which code, file or line the user wrote or is proud of (also in general, like "on your GitHub" or a company or product name): you must pick it yourself from the numbered code in this message (lines that start with "12| ", not the list of newest changes), choosing real logic that shows skill rather than comments or markup, and say the file path, the exact line numbers ("rad 40 till 52") and what that code does and why. Every example you give gets its line numbers; when a file is shown only in part, pick code from the part that is shown. Saying that you do not have the files or line numbers in front of you is wrong whenever numbered code is in this message.
 - Never invent anything the material and the lookups do not show: no facts, numbers, steps, colleagues, results or history. Never guess what code does without finding it.
 - If the material does not contain what is asked, say so briefly and honestly in the user's voice (for example "Exakt den delen har jag inte framför mig, men…") and continue with what the material does show. Never fill the gap with generic talk.
 - Never decide or promise anything for the user that the material does not state: moving, start date, salary, availability, plans to learn something, opinions. If the material says something related (for example where they live and want to work), answer honestly from that and keep the door open without inventing plans.
@@ -330,6 +335,8 @@ export async function generateAnswer(
   cfg: LlmConfig,
   req: AnswerRequest,
   signal: AbortSignal,
+  /** ISO country code of where the request comes from (Cloudflare), for weather and local news. */
+  country?: string,
 ): Promise<AnswerResult> {
   const started = Date.now();
   const fallbackLang = req.language === "auto" ? "sv" : req.language;
@@ -351,17 +358,22 @@ export async function generateAnswer(
         ? detailSystemPrompt(req.style, req.language)
         : shortSystemPrompt(req.style, req.language, !!req.context),
     context: req.context ? contextBlock(req.context) : undefined,
-    user: userPrompt(req, live),
+    user: web && country ? `${userPrompt(req, live)}\n\nThe user's approximate location: country ${country}.` : userPrompt(req, live),
     // Generous because reasoning tokens (when a model insists on them) count towards the limit.
     maxTokens: isDetail ? 1200 : 800,
     temperature: 0.5,
     json: true,
     signal,
-    // Each search adds about 20K tokens of results, so one is the limit.
-    webSearches: web ? 1 : undefined,
+    // Each search adds about 20K tokens of results; two let it find a page and then look closer.
+    webSearches: web ? 2 : undefined,
+    webCountry: web ? country : undefined,
+    // Nothing was fetched, so only a search can answer; otherwise the model sometimes just promises to look.
+    mustSearch: web && !/just now\b[^\n]*:\n/.test(live),
   });
 
-  const parsed = parseJsonLoose(raw);
+  // After a web search the model sometimes marks its sources as <cite index="…">…</cite> in the text.
+  const reply = raw.replace(/<\/?cite\b(?:[^>"]|"[^"]*")*>/g, "");
+  const parsed = parseJsonLoose(reply);
   let kind: AnswerKind;
   let question: string;
   let answer: string;
@@ -379,7 +391,7 @@ export async function generateAnswer(
     kind = isDetail ? "question" : k === "topic" || k === "none" ? k : "question";
   } else {
     // The model ignored the JSON format; treat the whole reply as the answer.
-    answer = cleanSpoken(raw);
+    answer = cleanSpoken(reply);
     question = "";
     lang = fallbackLang;
     kind = "question";

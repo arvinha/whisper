@@ -1,3 +1,4 @@
+import { DIGEST_VERSION } from "@/lib/shared/types";
 import { AppError } from "./errors";
 import { readZip } from "./extract";
 
@@ -21,7 +22,17 @@ const LANGUAGES: Record<string, string> = {
   sol: "Solidity", tf: "Terraform", graphql: "GraphQL", gql: "GraphQL", proto: "Protobuf",
 };
 /** Readable, but not counted as a programming language. */
-const OTHER_TEXT = new Set(["md", "markdown", "txt", "rst", "json", "yml", "yaml", "toml", "xml", "ini", "cfg", "conf", "properties", "env.example", "csv"]);
+const OTHER_TEXT = new Set(["json", "yml", "yaml", "toml", "xml", "ini", "cfg", "conf", "properties", "env.example"]);
+/** Written text: readmes, reports, theses and their references, which explain the project in words. */
+const PROSE = new Set(["md", "markdown", "txt", "rst", "adoc", "org", "tex", "bib"]);
+/** Data sets: a few short samples show their shape; thousands of them would crowd out everything else. */
+const DATA = new Set(["csv", "tsv", "jsonl", "ndjson"]);
+const DATA_DIRS = new Set(["data", "dataset", "datasets", "raw", "processed", "fixtures", "samples", "sample_data"]);
+/** Written documents below the top folder share this; readmes and top-level docs always come along. */
+const MAX_PROSE_CHARS = 80_000;
+const MAX_DATA_FILES = 8;
+const DATA_SAMPLE_LINES = 12;
+const DATA_SAMPLE_CHARS = 1_500;
 const SPECIAL_FILES = new Set(["dockerfile", "makefile", "procfile", "gemfile", "rakefile", "jenkinsfile", "cmakelists.txt", "requirements.txt", "pipfile"]);
 const SKIP_DIRS = new Set([
   "node_modules", ".git", ".svn", ".hg", "dist", "build", "out", "target", "bin", "obj", ".next", ".nuxt", ".svelte-kit",
@@ -63,7 +74,26 @@ function readable(path: string): boolean {
   const base = parts.at(-1) ?? "";
   if (!base || SKIP_FILES.has(base) || /\.min\.(js|css)$/.test(base) || /\.(map|snap)$/.test(base)) return false;
   const e = ext(lower);
-  return e in LANGUAGES || OTHER_TEXT.has(e) || SPECIAL_FILES.has(base);
+  return e in LANGUAGES || OTHER_TEXT.has(e) || PROSE.has(e) || DATA.has(e) || SPECIAL_FILES.has(base);
+}
+
+/** A data file: a table, or json, text or xml inside a data folder. */
+function isData(path: string): boolean {
+  const lower = path.toLowerCase();
+  const e = ext(lower);
+  if (DATA.has(e)) return true;
+  const dirs = lower.split("/").slice(0, -1);
+  return (e === "json" || e === "txt" || e === "xml") && dirs.some((d) => DATA_DIRS.has(d));
+}
+
+function isProse(path: string): boolean {
+  return PROSE.has(ext(path)) && !isData(path) && !SPECIAL_FILES.has(baseName(path));
+}
+
+/** The folder a data file is listed under: its first two folders, so seasons or splits stay apart. */
+function dataGroup(path: string): string {
+  const dirs = path.split("/").slice(0, -1);
+  return dirs.length ? `${dirs.slice(0, 2).join("/")}/` : "./";
 }
 
 function looksBinary(buf: Buffer): boolean {
@@ -98,20 +128,72 @@ function fileText(path: string, buf: Buffer): string {
   return text.replace(/\n{4,}/g, "\n\n\n").trimEnd();
 }
 
-/** Lower comes first: readme, build files, then source code with tests and config last. */
-function rank(path: string): number {
+/**
+ * Lower comes first: readme, build files, written documents (reports, theses, references), source
+ * code (what the readme names first), tests, config, and data samples last.
+ */
+function rank(path: string, named: ReadonlySet<string> = new Set()): number {
   const lower = path.toLowerCase();
   const base = baseName(lower);
   const depth = lower.split("/").length;
   if (/^readme(\.|$)/.test(base) && depth === 1) return 0;
   if (MANIFESTS.includes(base) && depth <= 2) return 1;
-  if (/^readme(\.|$)/.test(base)) return 2;
+  if (isData(lower)) return 9;
+  if (isProse(lower)) return 2 + Math.min(depth, 6) / 10;
   const e = ext(lower);
   const test = /(^|\/)(tests?|__tests__|spec|e2e)\//.test(lower) || /[._-](test|spec)\.[a-z]+$/.test(base);
-  if (e in LANGUAGES && !test) return 3 + Math.min(depth, 6) / 10;
-  if (e === "md" || e === "markdown" || e === "rst") return 4;
+  if (e in LANGUAGES && !test) return (named.has(base) ? 2.9 : 3) + Math.min(depth, 6) / 100;
   if (test) return 5;
   return 6;
+}
+
+/** File names the readme mentions, so the code it points to is read first. */
+function namedInReadme(files: Array<{ path: string; bytes: Buffer }>): Set<string> {
+  const readme = files.find((f) => /^readme(\.|$)/i.test(f.path));
+  const text = readme ? readme.bytes.toString("utf8").toLowerCase() : "";
+  return new Set(files.map((f) => baseName(f.path)).filter((b) => b.length > 3 && text.includes(b)));
+}
+
+/** The file list, with data folders as one line each ("data/2019-20/ … 612 datafiler (csv)"). */
+function treeText(paths: string[]): string {
+  const lines: string[] = [];
+  const groups = new Map<string, { count: number; exts: Set<string> }>();
+  for (const path of paths) {
+    if (!isData(path)) {
+      lines.push(path);
+      continue;
+    }
+    const group = groups.get(dataGroup(path)) ?? { count: 0, exts: new Set<string>() };
+    group.count++;
+    group.exts.add(ext(path));
+    groups.set(dataGroup(path), group);
+  }
+  for (const [dir, g] of groups) {
+    lines.push(g.count === 1 ? `${dir}(1 datafil, ${[...g.exts].join(", ")})` : `${dir} … ${g.count} datafiler (${[...g.exts].join(", ")})`);
+  }
+  return lines.sort().join("\n");
+}
+
+/** One small file from each data folder, folders with few files (results, tables) first. */
+function dataSamples<T extends { path: string }>(files: T[]): T[] {
+  const byGroup = new Map<string, T[]>();
+  for (const f of files) byGroup.set(dataGroup(f.path), [...(byGroup.get(dataGroup(f.path)) ?? []), f]);
+  const groups = [...byGroup.values()].sort((a, b) => a.length - b.length);
+  const out: T[] = [];
+  for (let round = 0; out.length < MAX_DATA_FILES && groups.some((g) => g.length > round); round++) {
+    for (const g of groups) {
+      // Small folders (a results table or two) are shown whole; big data sets by one example.
+      if (out.length >= MAX_DATA_FILES) break;
+      if (g.length > round && (round === 0 || g.length <= 3)) out.push(g[round]);
+    }
+  }
+  return out;
+}
+
+function sampleText(body: string): string {
+  const lines = body.split("\n");
+  const head = lines.slice(0, DATA_SAMPLE_LINES).join("\n").slice(0, DATA_SAMPLE_CHARS);
+  return lines.length > DATA_SAMPLE_LINES ? `${head}\n… (exempel; ${lines.length - DATA_SAMPLE_LINES} rader till)` : head;
 }
 
 function languageSummary(files: Array<{ path: string; size: number }>): string {
@@ -138,43 +220,67 @@ export interface SourceFile {
  * Turns a project's files into one text: name, languages, file tree, then the files themselves
  * as "### Fil: path" sections, most telling first, within MAX_CODE_CHARS.
  */
-export function codeDigest(title: string, files: SourceFile[], about: string[] = []): { text: string; truncated: boolean } {
-  const kept = files
+export function codeDigest(
+  title: string,
+  files: SourceFile[],
+  about: string[] = [],
+  allPaths?: string[],
+): { text: string; truncated: boolean } {
+  const usable = files
     .filter((f) => readable(f.path) && f.bytes.length > 0 && f.bytes.length <= MAX_SOURCE_BYTES && !looksBinary(f.bytes))
-    .map((f) => ({ path: f.path, size: f.bytes.length, bytes: f.bytes }))
-    .sort((a, b) => rank(a.path) - rank(b.path) || a.size - b.size || a.path.localeCompare(b.path));
+    .map((f) => ({ path: f.path, size: f.bytes.length, bytes: f.bytes }));
+  const named = namedInReadme(usable);
+  const byRank = (a: { path: string; size: number }, b: { path: string; size: number }) =>
+    rank(a.path, named) - rank(b.path, named) || a.size - b.size || a.path.localeCompare(b.path);
+  const data = usable.filter((f) => isData(f.path));
+  const kept = [...usable.filter((f) => !isData(f.path)), ...dataSamples(data.sort(byRank))].sort(byRank);
   if (kept.length === 0) {
     throw new AppError(400, "bad_request", "Hittade ingen kod eller text i projektet.");
   }
 
-  const langs = languageSummary(kept);
-  const tree = [...kept.map((f) => f.path)].sort().join("\n");
+  const langs = languageSummary(usable);
+  const listed = (allPaths ?? usable.map((f) => f.path)).filter(readable);
+  const tree = treeText(listed);
   const head = [
     `Kodprojekt: ${title}`,
     ...about,
     langs ? `Språk: ${langs}` : "",
-    `Filer (${kept.length}):\n${tree.length > MAX_TREE_CHARS ? `${tree.slice(0, MAX_TREE_CHARS)}\n…` : tree}`,
+    DIGEST_VERSION,
+    `Filer (${listed.length}):\n${tree.length > MAX_TREE_CHARS ? `${tree.slice(0, tree.lastIndexOf("\n", MAX_TREE_CHARS))}\n…` : tree}`,
   ]
     .filter(Boolean)
     .join("\n");
 
   let text = head;
-  let truncated = false;
+  let truncated = data.length > MAX_DATA_FILES;
+  let prose = 0;
   for (const f of kept) {
     let body = fileText(f.path, f.bytes);
     if (!body.trim()) continue;
+    if (isData(f.path)) body = sampleText(body);
     if (body.length > MAX_FILE_CHARS) {
       body = `${body.slice(0, MAX_FILE_CHARS)}\n… (resten av filen utelämnad)`;
       truncated = true;
     }
-    const section = `\n\n### Fil: ${f.path}\n${body}`;
-    if (text.length + section.length > MAX_CODE_CHARS) {
+    if (isProse(f.path) && depthOf(f.path) > 1 && prose + body.length > MAX_PROSE_CHARS) {
       truncated = true;
       continue;
     }
-    text += section;
+    const room = MAX_CODE_CHARS - text.length - f.path.length - 20;
+    if (body.length > room) {
+      truncated = true;
+      // The start of a big file says more than nothing; small leftovers are skipped.
+      if (room < 3_000) continue;
+      body = `${body.slice(0, body.lastIndexOf("\n", room - 60))}\n… (resten av filen utelämnad)`;
+    }
+    if (isProse(f.path)) prose += body.length;
+    text += `\n\n### Fil: ${f.path}\n${body}`;
   }
   return { text, truncated };
+}
+
+function depthOf(path: string): number {
+  return path.split("/").length;
 }
 
 /**
@@ -184,9 +290,10 @@ export function codeDigest(title: string, files: SourceFile[], about: string[] =
 export function pickSourcePaths(entries: Array<{ path: string; size: number }>, maxBytes: number): string[] {
   const picked: string[] = [];
   let total = 0;
-  const sorted = entries
-    .filter((e) => readable(e.path) && e.size > 0 && e.size <= MAX_SOURCE_BYTES)
-    .sort((a, b) => rank(a.path) - rank(b.path) || a.size - b.size || a.path.localeCompare(b.path));
+  const usable = entries.filter((e) => readable(e.path) && e.size > 0 && e.size <= MAX_SOURCE_BYTES);
+  const byRank = (a: { path: string; size: number }, b: { path: string; size: number }) =>
+    rank(a.path) - rank(b.path) || a.size - b.size || a.path.localeCompare(b.path);
+  const sorted = [...usable.filter((e) => !isData(e.path)).sort(byRank), ...dataSamples(usable.filter((e) => isData(e.path)).sort(byRank))];
   for (const e of sorted) {
     if (total + e.size > maxBytes) continue;
     picked.push(e.path);

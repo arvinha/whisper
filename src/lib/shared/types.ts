@@ -7,6 +7,11 @@ export type AnswerMode = "short" | "detail" | "deep";
 
 /** All of the prepared material for a deep answer: about 80K tokens, read from the prompt cache after the first call. */
 export const MAX_DEEP_CHARS = 320_000;
+/**
+ * In the head of every code project the server reads. Projects saved without it were read before
+ * documents, references and readme-named code were included, so the phone reads them again.
+ */
+export const DIGEST_VERSION = "Läsversion: 2";
 export type AnswerKind = "question" | "topic" | "none";
 export type AnswerStyle = "smart" | "expert" | "witty";
 export type LanguagePref = "auto" | "sv" | "da" | "en";
@@ -113,8 +118,10 @@ export interface AnswerRequest {
   shortAnswer?: string;
   /** The user's prepared material for this situation, as plain text. Deep mode: all of it. */
   context?: string;
-  /** The parts of the user's own code that match what is being talked about right now. */
+  /** The parts of the user's material (documents and code) that match what is being talked about. */
   snippets?: string;
+  /** Deep mode: full texts of the documents shown only in part in `context`, searched by the answer. */
+  library?: Array<{ name: string; text: string }>;
   /** Detail and deep mode: GitHub repos ("owner/name") in the material, whose newest changes are fetched. */
   repos?: string[];
   /** Deep mode: the answer needs fresh facts from the internet, so the model may search the web. */

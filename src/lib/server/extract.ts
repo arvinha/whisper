@@ -9,7 +9,8 @@ export const MAX_FILE_BYTES = 4_200_000;
 /** A zipped project; the code inside is what matters, and it is read without the AI model. */
 export const MAX_ZIP_BYTES = 25_000_000;
 /** About 25 pages of dense text; longer documents are cut. */
-export const MAX_EXTRACT_CHARS = 80_000;
+/** A whole thesis or report, so its reference list at the end is kept. */
+export const MAX_EXTRACT_CHARS = 150_000;
 const MAX_UNZIPPED_BYTES = 40_000_000;
 /** Below this many letters per page, a PDF is probably scanned and needs the model to read it. */
 const SCANNED_CHARS_PER_PAGE = 40;

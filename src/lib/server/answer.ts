@@ -9,10 +9,11 @@ import type {
   TranscriptLine,
 } from "@/lib/shared/types";
 import { LANGUAGE_CODES } from "@/lib/shared/types";
+import { FILE_MARK, searchMaterial, type SearchDoc } from "@/lib/shared/materialSearch";
 import type { LlmConfig } from "./config";
 import { AppError } from "./errors";
 import { liveLookups } from "./live";
-import { chat } from "./llm";
+import { chat, type LocalTool } from "./llm";
 
 const SHORT_MAX_WORDS = 25;
 const OPENER_MAX_WORDS = 14;
@@ -54,6 +55,7 @@ The user prepared for this situation and gave you the material below: for exampl
 - Pages read from links (a job ad, the employer's website) tell what the role and company are about: use their exact requirements, products, values and wording, and connect the user's experience to them.
 - Code projects (sections "### Fil: path") are the user's own work. When asked about a project, the code, a technology or how they solved something, answer like the developer who wrote it: name the real classes, functions, tables, endpoints, libraries and patterns, say what they do and why that choice made sense. Explain only what the code shows; for results or history the code does not show, describe the approach instead. The message may add the code parts that match the current question.
 - Asked to point to a file or a line: every code line here starts with its line number ("12| "), also in code fetched from GitHub just now. Name the file and the exact line or lines and say what that code does and why it is written that way. Pick code that shows the user's skill, never a flaw. Never say you do not have the files or line numbers in front of you when numbered code is in this message.
+- Documents such as a thesis or report count as the user's work too, including their data sources, references (a bibliography, "\\cite{…}", "@misc{…}") and acknowledgements. Asked where data or facts came from or whether a source was credited, name the concrete source as written there (who made it, what it is, where it is found) and how the user credited it.
 - Questions unrelated to the material are answered as usual.
 - The material may be in another language than the conversation. That never changes the answer language: follow the language rule in your instructions above.
 
@@ -104,7 +106,19 @@ Reply with JSON only, exactly in this shape:
 "kind" must be "question", "topic" or "none".`;
 }
 
-const MATERIAL_INTRO = `Below the instructions is ALL of the user's prepared material: for example their CV, the job ad and the complete source code of their projects, where every code line starts with its line number ("12| "). Together with what the app fetched from the internet just now (if anything), it is everything you know about the user. Read the parts that matter before you answer.`;
+function materialIntro(searchable: boolean): string {
+  return `Below the instructions is the user's prepared material: for example their CV, the job ad, documents such as a thesis or report with its references, and the source code of their projects, where every code line starts with its line number ("12| ").${
+    searchable
+      ? ` Documents marked "(visas bara delvis)" are too long to show whole: only their start or overview is here, and the ${SEARCH_TOOL} tool searches their full text word for word, every file, reference list and appendix included.`
+      : ""
+  } Together with what the app fetched from the internet just now (if anything), it is everything you know about the user. Read the parts that matter before you answer.`;
+}
+
+const SEARCH_TOOL = "search_material";
+
+const SEARCH_RULE = `- Most of the documents marked "(visas bara delvis)" is not in this message. When the question asks for something specific (a person's name, a source or reference, where data came from, a number, a date, a result, a method detail, a file or function) and that exact detail is not written in this message, call ${SEARCH_TOOL} before you answer, even when you could answer in general terms: a vague answer ("a classmate", "an open dataset", "good results") is wrong when the exact detail may be in the hidden text, and so is going along with a vague opener. Search with precise words as they would be written in the material and in its language (for an English thesis for example "author", "dataset source", "references"), and when a search misses, search again with other words or a name you found. Only when the material and your searches show nothing, say so briefly and honestly in the user's voice (for example "Exakt den delen har jag inte framför mig, men…") and continue with what the material does show. Never fill the gap with generic talk.`;
+
+const NO_SEARCH_RULE = `- If the material does not contain what is asked, say so briefly and honestly in the user's voice (for example "Exakt den delen har jag inte framför mig, men…") and continue with what the material does show. Never fill the gap with generic talk.`;
 
 const NO_MATERIAL_INTRO = `The user has no prepared material for this. Answer from what the app fetched from the internet just now, your web search (if you have it) and reliable general knowledge.`;
 
@@ -116,18 +130,18 @@ const WEB_SEARCH_RULE = `- You have a web search tool. Use it for anything curre
 - Asked to pick, summarize or comment on an article or news item: choose one concrete item from the results (when a connection to the user is asked for, one that really connects, such as technology, business, AI or education) and give its headline, what it is about and why it matters; when the profile or material allows, add how it connects to the user's own work, business or studies.
 - After searching, still reply with only the JSON below and say the facts naturally, without links, source names or citation marks unless they matter. Say every headline and quote in the answer language, translated, never in the original English. Give the answer itself and stop: never end with advice such as "kolla gärna en färsk prognos innan du går ut" or "läs gärna artikeln", and never say what you could not open when you found the answer.`;
 
-function deepSystemPrompt(style: AnswerStyle, language: LanguagePref, material: boolean, web: boolean): string {
+function deepSystemPrompt(style: AnswerStyle, language: LanguagePref, material: boolean, web: boolean, searchable: boolean): string {
   return `${INTRO}
 
 The user just asked for help with the open question. They are already saying a short opener out loud (given in the message); right after it they will say your answer, so continue seamlessly from the opener without repeating it. Never comment on or correct the opener: if it got something wrong, just state the right facts.
 
-${material ? MATERIAL_INTRO : NO_MATERIAL_INTRO}
+${material ? materialIntro(searchable) : NO_MATERIAL_INTRO}
 
 Strict rules:
 - Answer the actual question concretely, in first person, as the user who did the work: name the real projects, files, classes, functions, tables, endpoints, libraries, employers, years and numbers that the material shows. For a question about specific code, find it and say what it really does, in words.
 - Asked which code, file or line the user wrote or is proud of (also in general, like "on your GitHub" or a company or product name): you must pick it yourself from the numbered code in this message (lines that start with "12| ", not the list of newest changes), choosing real logic that shows skill rather than comments or markup, and say the file path, the exact line numbers ("rad 40 till 52") and what that code does and why. Every example you give gets its line numbers; when a file is shown only in part, pick code from the part that is shown. Saying that you do not have the files or line numbers in front of you is wrong whenever numbered code is in this message.
 - Never invent anything the material and the lookups do not show: no facts, numbers, steps, colleagues, results or history. Never guess what code does without finding it.
-- If the material does not contain what is asked, say so briefly and honestly in the user's voice (for example "Exakt den delen har jag inte framför mig, men…") and continue with what the material does show. Never fill the gap with generic talk.
+${searchable ? SEARCH_RULE : NO_SEARCH_RULE}
 - Never decide or promise anything for the user that the material does not state: moving, start date, salary, availability, plans to learn something, opinions. If the material says something related (for example where they live and want to work), answer honestly from that and keep the door open without inventing plans.
 - Group projects: describe concretely what the project does from its code and say it was built in a group; claim personal contributions only where the material shows them. When the user's own part is not shown, talk about what "we" built, without saying that you cannot tell. Never disown a project the user listed.
 - Never volunteer weaknesses, caveats or doubts nobody asked about, and never talk about how you would present something: just say it.
@@ -177,10 +191,14 @@ function words(list: string): RegExp {
 /** Words that mostly occur in one of the three languages. */
 const MARKERS: Record<LanguageCode, RegExp[]> = {
   sv: [
-    words("och|är|inte|hur|varför|vad|vill|också|någon|något|skulle|kanske|mycket|jobba|jobbar|berätta|tycker|kör|känner"),
+    words(
+      "och|är|inte|hur|varför|vad|vill|också|någon|något|skulle|kanske|mycket|jobba|jobbar|berätta|tycker|kör|känner|" +
+        "jag|vilka|vilken|vilket|vem|enligt|från|när|ni|ditt|dina|mitt|hittade|krediterade",
+    ),
     /[äö]/giu,
   ],
-  da: [words("og|er|ikke|hvordan|hvorfor|hvad|vil|også|nogen|noget|meget|fortæl|synes|arbejder|arbejde"), /[æø]/giu],
+  // Not "er": it is Danish for "is" but also Swedish ("er modell").
+  da: [words("og|ikke|hvordan|hvorfor|hvad|vil|også|nogen|noget|meget|fortæl|synes|arbejder|arbejde|jeg|hvilke|hvilken|hvem|ifølge|fra"), /[æø]/giu],
   en: [words("the|and|is|are|what|why|how|you|your|would|about|with|have|tell|do|does|so")],
 };
 
@@ -227,7 +245,7 @@ function userPrompt(req: AnswerRequest, live = ""): string {
   }
   if (req.snippets) {
     parts.push(
-      `Parts of the user's own code that match what is being talked about (use them if the question is about this code, otherwise ignore them):\n${req.snippets}`,
+      `Parts of the user's material (documents and code) that match what is being talked about (use them when the question is about them, otherwise ignore them):\n${req.snippets}`,
     );
   }
   if (live) {
@@ -331,6 +349,44 @@ function mockAnswer(req: AnswerRequest): Omit<AnswerResult, "model" | "ms"> {
   };
 }
 
+const SEARCH_RESULT_CHARS = 9_000;
+
+/**
+ * The material as search documents: the full texts of the documents shown only in part, and the
+ * rest of the context (with the line numbers it got for the model taken off again).
+ */
+function searchDocs(req: AnswerRequest): SearchDoc[] {
+  const docs: SearchDoc[] = [...(req.library ?? [])];
+  const parts = (req.context ?? "").split(/\n\n=== (.+?) ===\n/);
+  if (parts[0]?.trim()) docs.push({ name: "Förberedelsen", text: parts[0] });
+  for (let i = 1; i + 1 < parts.length; i += 2) {
+    if (parts[i].endsWith("(visas bara delvis)")) continue;
+    const text = parts[i + 1].includes(FILE_MARK) ? parts[i + 1].replace(/^\d+\| /gm, "") : parts[i + 1];
+    docs.push({ name: parts[i], text });
+  }
+  return docs;
+}
+
+function materialSearchTool(req: AnswerRequest): LocalTool {
+  const docs = searchDocs(req);
+  return {
+    name: SEARCH_TOOL,
+    description:
+      "Searches ALL of the user's prepared material word for word: every document in full (theses, reports with their references and appendices, CV, notes) and every file of their code projects (readme, docs, scripts, code with line numbers). Use it whenever something asked is not shown in the message. Write the query with the precise words the material would use, in the material's language (an English thesis: English words), for example names, terms, file names or 'dataset source references'. Returns the best matching passages with document, file and line numbers, or says that nothing matched.",
+    inputSchema: {
+      type: "object",
+      properties: { query: { type: "string", description: "Words to search for." } },
+      required: ["query"],
+    },
+    run(input) {
+      const query = typeof input.query === "string" ? input.query.slice(0, 300) : "";
+      const hits = searchMaterial(docs, query, SEARCH_RESULT_CHARS);
+      console.log(`[psst] material search: ${query.split(/\s+/).filter(Boolean).length} words, ${hits.length} chars found`);
+      return hits || "Nothing in the material matches these words. Try other words (synonyms, a name, the material's language) before concluding it is not there.";
+    },
+  };
+}
+
 export async function generateAnswer(
   cfg: LlmConfig,
   req: AnswerRequest,
@@ -351,9 +407,10 @@ export async function generateAnswer(
   const web = isDeep && !!req.live && cfg.provider === "anthropic";
   // The short answer must come at once; only the answers that follow it wait for the internet.
   const live = isDetail ? await liveLookups(req, signal) : "";
+  const search = isDeep && cfg.provider === "anthropic" && req.library?.length ? materialSearchTool(req) : null;
   const raw = await chat(cfg, {
     system: isDeep
-      ? deepSystemPrompt(req.style, req.language, !!req.context, web)
+      ? deepSystemPrompt(req.style, req.language, !!req.context, web, !!search)
       : isDetail
         ? detailSystemPrompt(req.style, req.language)
         : shortSystemPrompt(req.style, req.language, !!req.context),
@@ -369,6 +426,8 @@ export async function generateAnswer(
     webCountry: web ? country : undefined,
     // Nothing was fetched, so only a search can answer; otherwise the model sometimes just promises to look.
     mustSearch: web && !/just now\b[^\n]*:\n/.test(live),
+    localTools: search ? [search] : undefined,
+    maxToolRounds: 3,
   });
 
   // After a web search the model sometimes marks its sources as <cite index="…">…</cite> in the text.

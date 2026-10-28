@@ -29,6 +29,17 @@ export interface ChatRequest {
   webCountry?: string;
   /** Makes Claude search before answering, for questions only the internet can answer. */
   mustSearch?: boolean;
+  /** Tools this server runs itself, such as searching the user's material. Claude only. */
+  localTools?: LocalTool[];
+  /** Rounds of local tool calls before the model has to answer. */
+  maxToolRounds?: number;
+}
+
+export interface LocalTool {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  run(input: Record<string, unknown>): string;
 }
 
 type Body = Record<string, unknown>;
@@ -82,7 +93,32 @@ function initialRejected(model: string): Set<string> {
   return new Set(KNOWN_REJECTED.find(([re]) => re.test(model))?.[1] ?? []);
 }
 
-function buildRequest(cfg: LlmConfig, req: ChatRequest): { url: string; headers: HeadersInit; body: Body } {
+function anthropicTools(req: ChatRequest, turns: unknown[], mustAnswer: boolean): Body {
+  const tools: unknown[] = [];
+  if (req.webSearches) {
+    tools.push({
+      type: "web_search_20250305",
+      name: "web_search",
+      max_uses: req.webSearches,
+      ...(req.webCountry ? { user_location: { type: "approximate", country: req.webCountry } } : {}),
+    });
+  }
+  for (const t of req.localTools ?? []) tools.push({ name: t.name, description: t.description, input_schema: t.inputSchema });
+  if (tools.length === 0) return {};
+  const choice = mustAnswer ? { type: "none" } : req.mustSearch && turns.length === 0 ? { type: "any" } : null;
+  return { tools, ...(choice ? { tool_choice: choice } : {}) };
+}
+
+/**
+ * `turns` are the model's earlier tool calls in this answer and their results; `mustAnswer` makes
+ * it answer now instead of calling more tools.
+ */
+function buildRequest(
+  cfg: LlmConfig,
+  req: ChatRequest,
+  turns: unknown[] = [],
+  mustAnswer = false,
+): { url: string; headers: HeadersInit; body: Body } {
   if (req.attachments?.length && cfg.provider !== "anthropic" && cfg.provider !== "openai") {
     throw new AppError(400, "bad_request", `${PROVIDER_LABEL[cfg.provider]} kan inte läsa bilder eller skannade PDF:er.`);
   }
@@ -110,23 +146,11 @@ function buildRequest(cfg: LlmConfig, req: ChatRequest): { url: string; headers:
                 { type: "text", text: req.context, cache_control: { type: "ephemeral" } },
               ]
             : req.system,
-          messages: [{ role: "user", content: anthropicContent(req) }],
+          messages: [{ role: "user", content: anthropicContent(req) }, ...turns],
           temperature: req.temperature,
           output_config: { effort: "low" },
           thinking: { type: "disabled" },
-          ...(req.webSearches
-            ? {
-                tools: [
-                  {
-                    type: "web_search_20250305",
-                    name: "web_search",
-                    max_uses: req.webSearches,
-                    ...(req.webCountry ? { user_location: { type: "approximate", country: req.webCountry } } : {}),
-                  },
-                ],
-                ...(req.mustSearch ? { tool_choice: { type: "any" } } : {}),
-              }
-            : {}),
+          ...anthropicTools(req, turns, mustAnswer),
         },
       };
     case "openai":
@@ -199,7 +223,7 @@ interface OpenAiStyleResponse {
 }
 
 interface AnthropicResponse {
-  content?: Array<{ type: string; text?: string }>;
+  content?: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }>;
   stop_reason?: string;
   usage?: {
     input_tokens?: number;
@@ -210,16 +234,19 @@ interface AnthropicResponse {
   };
 }
 
+function logUsage(cfg: LlmConfig, data: unknown) {
+  const u = (data as AnthropicResponse).usage;
+  if (!u) return;
+  console.log(
+    `[psst] tokens ${cfg.model}: in ${u.input_tokens ?? 0}, cache read ${u.cache_read_input_tokens ?? 0}, cache write ${u.cache_creation_input_tokens ?? 0}, out ${u.output_tokens ?? 0}` +
+      (u.server_tool_use?.web_search_requests ? `, web searches ${u.server_tool_use.web_search_requests}` : ""),
+  );
+}
+
 function extractText(cfg: LlmConfig, data: unknown): string {
   if (cfg.provider === "anthropic") {
     const res = data as AnthropicResponse;
-    const u = res.usage;
-    if (u) {
-      console.log(
-        `[psst] tokens ${cfg.model}: in ${u.input_tokens ?? 0}, cache read ${u.cache_read_input_tokens ?? 0}, cache write ${u.cache_creation_input_tokens ?? 0}, out ${u.output_tokens ?? 0}` +
-          (u.server_tool_use?.web_search_requests ? `, web searches ${u.server_tool_use.web_search_requests}` : ""),
-      );
-    }
+    logUsage(cfg, res);
     const text = (res.content ?? [])
       .filter((b) => b.type === "text" && typeof b.text === "string")
       .map((b) => b.text)
@@ -241,11 +268,39 @@ function extractText(cfg: LlmConfig, data: unknown): string {
 
 export async function chat(cfg: LlmConfig, req: ChatRequest): Promise<string> {
   const label = PROVIDER_LABEL[cfg.provider];
+  const tools = cfg.provider === "anthropic" ? (req.localTools ?? []) : [];
+  const rounds = tools.length ? (req.maxToolRounds ?? 3) : 0;
+  const turns: unknown[] = [];
+  for (let round = 0; ; round++) {
+    const data = (await send(cfg, req, turns, rounds > 0 && round >= rounds)) as AnthropicResponse;
+    const calls = tools.length ? (data.content ?? []).filter((b) => b.type === "tool_use" && tools.some((t) => t.name === b.name)) : [];
+    if (calls.length && round < rounds) {
+      logUsage(cfg, data);
+      turns.push({ role: "assistant", content: data.content });
+      turns.push({
+        role: "user",
+        content: calls.map((call) => {
+          const tool = tools.find((t) => t.name === call.name)!;
+          const input = call.input && typeof call.input === "object" ? (call.input as Record<string, unknown>) : {};
+          return { type: "tool_result", tool_use_id: call.id, content: tool.run(input) };
+        }),
+      });
+      continue;
+    }
+    const text = extractText(cfg, data);
+    if (!text) throw new AppError(502, "provider_error", `${label} gav ett tomt svar.`);
+    return text;
+  }
+}
+
+/** One call to the provider, retried without the optional parameters it rejects. */
+async function send(cfg: LlmConfig, req: ChatRequest, turns: unknown[], mustAnswer: boolean): Promise<unknown> {
+  const label = PROVIDER_LABEL[cfg.provider];
   const cacheKey = `${cfg.provider}:${cfg.model}`;
   const rejected = rejectedParams.get(cacheKey) ?? initialRejected(cfg.model);
 
   for (let attempt = 0; attempt <= OPTIONAL_PARAMS.length; attempt++) {
-    const { url, headers, body } = buildRequest(cfg, req);
+    const { url, headers, body } = buildRequest(cfg, req, turns, mustAnswer);
     for (const p of rejected) delete body[p];
     try {
       const res = await providerFetch(label, url, {
@@ -254,9 +309,7 @@ export async function chat(cfg: LlmConfig, req: ChatRequest): Promise<string> {
         body: JSON.stringify(body),
         signal: req.signal,
       });
-      const text = extractText(cfg, await res.json());
-      if (!text) throw new AppError(502, "provider_error", `${label} gav ett tomt svar.`);
-      return text;
+      return await res.json();
     } catch (err) {
       if (err instanceof AppError && err.extra.upstreamStatus === 400) {
         const param = findRejectedParam(err, body);

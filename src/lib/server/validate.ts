@@ -183,7 +183,27 @@ export function parseAnswerRequest(input: unknown): AnswerRequest {
     snippets: str(body.snippets, mode === "deep" ? MAX_DEEP_SNIPPET_CHARS : MAX_SNIPPET_CHARS) || undefined,
     repos: parseRepos(body.repos),
     live: mode === "deep" && body.live === true ? true : undefined,
+    library: mode === "deep" ? parseLibrary(body.library) : undefined,
   };
+}
+
+const MAX_LIBRARY_DOCS = 20;
+const MAX_LIBRARY_CHARS = 600_000;
+
+function parseLibrary(value: unknown): Array<{ name: string; text: string }> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out: Array<{ name: string; text: string }> = [];
+  let room = MAX_LIBRARY_CHARS;
+  for (const item of value.slice(0, MAX_LIBRARY_DOCS)) {
+    if (!item || typeof item !== "object") continue;
+    const doc = item as Record<string, unknown>;
+    const text = str(doc.text, room);
+    if (!text) continue;
+    out.push({ name: str(doc.name, 200) || "Dokument", text });
+    room -= text.length;
+    if (room <= 0) break;
+  }
+  return out.length ? out : undefined;
 }
 
 const MAX_REPOS = 3;

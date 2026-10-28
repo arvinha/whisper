@@ -393,7 +393,12 @@ const MAX_PICKED_BYTES = 400_000;
 const RAW_PARALLEL = 16;
 
 /** Only the source files of a repo too big to download whole, read one by one. */
-async function sourceFiles(owner: string, repo: string, ref: string, signal: AbortSignal): Promise<SourceFile[]> {
+async function sourceFiles(
+  owner: string,
+  repo: string,
+  ref: string,
+  signal: AbortSignal,
+): Promise<{ files: SourceFile[]; paths: string[] }> {
   const tree = await githubApi<{ tree?: Array<{ path: string; type: string; size?: number }> }>(
     `/repos/${owner}/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
     signal,
@@ -414,7 +419,7 @@ async function sourceFiles(owner: string, repo: string, ref: string, signal: Abo
   if (files.length === 0) {
     throw new AppError(400, "bad_request", "Projektet är för stort att hämta och ingen källkod hittades. Ladda upp en zip med bara källkoden.");
   }
-  return files;
+  return { files, paths: blobs.map((b) => b.path) };
 }
 
 export async function readRepo(owner: string, repo: string, signal: AbortSignal): Promise<ExtractResult> {
@@ -430,7 +435,9 @@ export async function readRepo(owner: string, repo: string, signal: AbortSignal)
   // GitHub's size (in KB) is the packed history; well above the zip limit, skip straight to the source files.
   const huge = (meta?.size ?? 0) * 1024 > MAX_ZIP_BYTES * 1.5;
   const zip = huge ? null : await download(`https://codeload.github.com/${owner}/${repo}/zip/${ref}`, signal);
-  const files = zip ? zipFiles(zip) : await sourceFiles(owner, repo, meta?.default_branch ?? "HEAD", signal);
+  const { files, paths } = zip
+    ? { files: zipFiles(zip), paths: undefined }
+    : await sourceFiles(owner, repo, meta?.default_branch ?? "HEAD", signal);
   const about = [
     `GitHub: ${meta?.html_url ?? `https://github.com/${owner}/${repo}`}`,
     meta?.description ? `Beskrivning: ${meta.description}` : "",
@@ -438,7 +445,7 @@ export async function readRepo(owner: string, repo: string, signal: AbortSignal)
     meta?.homepage ? `Webbplats: ${meta.homepage}` : "",
     meta?.pushed_at ? `Senast uppdaterat: ${meta.pushed_at.slice(0, 10)}` : "",
   ].filter(Boolean);
-  const digest = codeDigest(name, files, about);
+  const digest = codeDigest(name, files, about, paths);
   return { name, text: digest.text, method: "text", truncated: digest.truncated, kind: "code", url: `https://github.com/${owner}/${repo}` };
 }
 

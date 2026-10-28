@@ -15,7 +15,7 @@ import type {
   SummaryResult,
   TranscriptLine,
 } from "@/lib/shared/types";
-import { MAX_DEEP_CHARS } from "@/lib/shared/types";
+import { DIGEST_VERSION, MAX_DEEP_CHARS } from "@/lib/shared/types";
 import { addAgendaItems, fromSummary } from "./agenda";
 import { Api, ApiError, isAbort } from "./api";
 import { AudioCapture, micErrorMessage, type CaptureState } from "./audio/capture";
@@ -27,10 +27,10 @@ import { MediaButtons } from "./mediaButtons";
 import { DICTS, type UiLang } from "@/lib/i18n";
 import { FEATURES } from "@/lib/shared/features";
 import { getT, uiLang } from "./i18n";
-import { codeSnippets } from "./codeSearch";
-import { briefDocs, deepMaterial, getActivePrep, prepContext, type Prep } from "./preps";
+import { materialSnippets } from "./codeSearch";
+import { briefDocs, deepMaterial, getActivePrep, prepContext, replaceDocText, staleRepos, type Prep } from "./preps";
 import { claimLegacy } from "./legacy";
-import { legacyWaiting, onOwnerChange, ownedKey, ownerOf, setOwner } from "./owner";
+import { currentOwner, legacyWaiting, onOwnerChange, ownedKey, ownerOf, setOwner } from "./owner";
 import { getSettings, subscribeSettings, updateSettings } from "./settings";
 import { Speaker, type BeepKind, type VoiceBackend } from "./speaker";
 import { Transcriber, type TranscribedSegment } from "./transcriber";
@@ -222,6 +222,7 @@ const SUMMARY_PREP_CHARS = 15_000;
 const HISTORY_SIZE = 50;
 const NOTICE_MS = 7_000;
 const MIC_CHECK_MS = 2_500;
+const RESUME_WAIT_MS = 2_500;
 /** The capture sends samples continuously, even in silence; a gap means the system stopped it. */
 const MIC_STALL_MS = 3_000;
 const MAX_MIC_RESTARTS = 2;
@@ -436,6 +437,29 @@ export class Engine {
   private adoptOwner(config: PublicConfig) {
     setOwner(ownerOf(config));
     if (config.authorized && !config.account && legacyWaiting()) void claimLegacy();
+    if (config.authorized) void this.refreshRepos();
+  }
+
+  private refreshedOwners = new Set<string>();
+
+  /** Reads GitHub projects saved by an older reader again, once per person and visit. */
+  private async refreshRepos() {
+    const owner = currentOwner();
+    if (!owner || this.refreshedOwners.has(owner)) return;
+    this.refreshedOwners.add(owner);
+    for (const stale of staleRepos()) {
+      try {
+        const result = await this.api.link(stale.url);
+        if (currentOwner() !== owner) return;
+        if (result.type === "doc" && result.doc.text.includes(DIGEST_VERSION)) {
+          replaceDocText(stale.prepId, stale.docId, result.doc);
+          this.diag(`kodprojekt läst på nytt: ${result.doc.name}`);
+        }
+      } catch {
+        // The old reading stays; the next visit tries again.
+        this.refreshedOwners.delete(owner);
+      }
+    }
   }
 
   /** Charges an answer the user asked for, in the background so the answer is never held up. */
@@ -867,22 +891,63 @@ export class Engine {
   /** Call from a tap after iOS paused audio (lock screen, phone call, Siri). */
   resume() {
     if (!this.running) return;
-    this.diag("återuppta (tryck)");
+    this.diag(`återuppta (tryck), ljud ${this.ctx?.state ?? "saknas"}`);
     this.micRestarts = 0;
     this.micTroubleSince = 0;
-    this.ensureAudioContext();
+    // iOS often never lets an audio engine it interrupted run again; a new one made in this tap does.
+    const fresh = !!this.ctx && this.ctx.state !== "running" && this.replaceAudioContext();
+    if (!fresh) this.ensureAudioContext();
     this.media.keepPlaying();
     this.speaker.unlock();
     void (async () => {
-      if (this.state.mode === "mic" && !(this.capture?.healthy ?? false)) await this.restartCapture();
-      await sleep(300);
-      const audioOk = !this.ctx || this.ctx.state === "running";
-      const micOk = this.state.mode !== "mic" || (this.capture?.healthy ?? false);
-      this.set({ interrupted: !(audioOk && micOk) });
-      if (!audioOk || !micOk) {
+      if (this.state.mode === "mic" && (fresh || !(this.capture?.healthy ?? false))) await this.restartCapture();
+      const ok = await this.waitForAudio(RESUME_WAIT_MS);
+      if (!this.running) return;
+      this.set({ interrupted: !ok });
+      if (!ok) {
+        this.diag(`återupptagning misslyckades: ljud ${this.ctx?.state}, mikrofon ${this.capture?.healthy ? "på" : "av"}`);
         this.showNotice(getT().errors.audioResume, "error");
       }
     })();
+  }
+
+  /** A new audio engine in place of the current one. Must run inside a tap on iOS. */
+  private replaceAudioContext(): boolean {
+    const old = this.ctx;
+    const Ctor =
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!old || !Ctor) return false;
+    let ctx: AudioContext;
+    try {
+      ctx = new Ctor({ latencyHint: "interactive" });
+    } catch {
+      return false;
+    }
+    void ctx.resume().catch(() => {});
+    old.onstatechange = null;
+    // Sound already queued on the old engine would never finish playing.
+    this.speaker.detach();
+    this.capture?.stop();
+    this.capture = null;
+    void old.close().catch(() => {});
+    ctx.onstatechange = () => this.onAudioContextState();
+    this.ctx = ctx;
+    this.speaker.attach(ctx);
+    this.diag("ny ljudmotor");
+    return true;
+  }
+
+  /** iOS can take a moment to let audio and the microphone run again after a tap. */
+  private async waitForAudio(ms: number): Promise<boolean> {
+    const until = Date.now() + ms;
+    for (;;) {
+      const audioOk = !this.ctx || this.ctx.state === "running";
+      const micOk = this.state.mode !== "mic" || (this.capture?.healthy ?? false);
+      if (audioOk && micOk) return true;
+      if (Date.now() > until || !this.running) return false;
+      await sleep(150);
+    }
   }
 
   // ---- settings ----------------------------------------------------------------------------
@@ -915,10 +980,10 @@ export class Engine {
     return prepContext(getActivePrep(), maxChars) || undefined;
   }
 
-  /** The parts of the user's code projects that match what is being talked about. */
+  /** The parts of the user's material (documents and code) that match what is being talked about. */
   private snippetsFor(query: string): string | undefined {
     const max = this.state.config?.llm?.frugal ? 2500 : 7000;
-    return codeSnippets(getActivePrep(), query, max) || undefined;
+    return materialSnippets(getActivePrep(), query, max) || undefined;
   }
 
   // ---- transcript --------------------------------------------------------------------------
@@ -1729,7 +1794,7 @@ export class Engine {
    */
   private deepRequest(question: string, opener: string, live = false): AnswerRequest | null {
     if (this.state.config?.llm?.frugal) return null;
-    const { context, snippets } = deepMaterial(getActivePrep(), MAX_DEEP_CHARS, `${question} ${this.transcriptTail()}`);
+    const { context, snippets, library } = deepMaterial(getActivePrep(), MAX_DEEP_CHARS, `${question} ${this.transcriptTail()}`);
     if (!context && !live) return null;
     const s = getSettings();
     return {
@@ -1742,6 +1807,7 @@ export class Engine {
       shortAnswer: opener,
       context: context || undefined,
       snippets: snippets || undefined,
+      ...(library.length ? { library } : {}),
       repos: this.repos(),
       ...(live ? { live } : {}),
     };

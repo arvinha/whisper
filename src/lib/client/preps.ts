@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
-import type { PrepBrief, PrepDocKind, PrepKind } from "@/lib/shared/types";
-import { codeOverview, codeSnippets, FILE_MARK } from "./codeSearch";
+import { DIGEST_VERSION, type PrepBrief, type PrepDocKind, type PrepKind } from "@/lib/shared/types";
+import { codeOverview, FILE_MARK, materialSnippets } from "./codeSearch";
 import { getT } from "./i18n";
 import { onOwnerChange, ownedKey } from "./owner";
 
@@ -48,7 +48,8 @@ const KIND_ENGLISH: Record<PrepKind, string> = {
 
 const STORAGE_KEY = "psst.preps.v1";
 const MAX_PREPS = 12;
-export const MAX_DOC_CHARS = 80_000;
+/** A whole thesis or report, so its reference list at the end is kept. */
+export const MAX_DOC_CHARS = 150_000;
 /** A whole code project; only the parts that match each question go with an answer. */
 export const MAX_CODE_DOC_CHARS = 150_000;
 export const MAX_PREP_TOTAL_CHARS = 500_000;
@@ -184,6 +185,26 @@ export function addDoc(
   return ok ? null : t.storageFull;
 }
 
+/** GitHub projects read by an older reader (see DIGEST_VERSION), in all of this person's preps. */
+export function staleRepos(): Array<{ prepId: string; docId: string; url: string }> {
+  return getPrepState().preps.flatMap((p) =>
+    p.docs
+      .filter((d) => d.kind === "code" && d.url?.startsWith("https://github.com/") && !d.text.includes(DIGEST_VERSION))
+      .map((d) => ({ prepId: p.id, docId: d.id, url: d.url! })),
+  );
+}
+
+/** Puts a newer reading of a document in place of the old one, keeping its place and id. */
+export function replaceDocText(id: string, docId: string, doc: { text: string; truncated?: boolean }) {
+  const prep = getPrepState().preps.find((p) => p.id === id);
+  const old = prep?.docs.find((d) => d.id === docId);
+  if (!prep || !old) return;
+  const room = MAX_PREP_TOTAL_CHARS - prepChars(prep) + old.text.length;
+  const text = doc.text.slice(0, Math.min(old.kind === "code" ? MAX_CODE_DOC_CHARS : MAX_DOC_CHARS, room));
+  const fresh = { ...old, text, truncated: !!doc.truncated || text.length < doc.text.length };
+  updatePrep(id, { docs: prep.docs.map((d) => (d.id === docId ? fresh : d)) });
+}
+
 export function removeDoc(id: string, docId: string) {
   const prep = getPrepState().preps.find((p) => p.id === id);
   if (prep) updatePrep(id, { docs: prep.docs.filter((d) => d.id !== docId) });
@@ -268,14 +289,24 @@ function numberCodeLines(text: string): string {
 /** Sent uncached with every deep answer, so kept to the few best-matching parts. */
 const DEEP_SNIPPET_CHARS = 12_000;
 
+/** How much of a long document stays in the deep answer's context when everything does not fit. */
+const SHRUNK_DOC_CHARS = 10_000;
+
+export interface DeepMaterial {
+  context: string;
+  snippets: string;
+  /** Full texts of the documents shown only in part in `context`, for the answer's search tool. */
+  library: Array<{ name: string; text: string }>;
+}
+
 /**
  * All of the prep for the deep answer: every document whole, code with line numbers. `context`
- * stays the same between questions so the model's prompt cache keeps it fast. Code projects that
- * do not fit (largest first) shrink to their overview, and `snippets` carries their parts that
- * match `query`.
+ * stays the same between questions so the model's prompt cache keeps it fast. Documents that do
+ * not fit (largest first) shrink to their start or overview; `snippets` carries their parts that
+ * match `query`, and `library` their full text so the answer can search all of it.
  */
-export function deepMaterial(prep: Prep | null, maxChars: number, query: string): { context: string; snippets: string } {
-  if (!prep || (prep.docs.length === 0 && !prep.notes)) return { context: "", snippets: "" };
+export function deepMaterial(prep: Prep | null, maxChars: number, query: string): DeepMaterial {
+  if (!prep || (prep.docs.length === 0 && !prep.notes)) return { context: "", snippets: "", library: [] };
   const head: string[] = [`Situation: ${KIND_ENGLISH[prep.kind]}${prep.title ? ` – ${prep.title}` : ""}`];
   if (prep.notes) head.push(`What the user wants to achieve or highlight:\n${prep.notes}`);
   if (prep.brief) head.push(`Prepared briefing:\n${briefText(prep.brief)}`);
@@ -283,15 +314,20 @@ export function deepMaterial(prep: Prep | null, maxChars: number, query: string)
   const total = () => head.join("\n\n").length + [...blocks.values()].reduce((n, b) => n + b.length, 0);
 
   const shrunk: PrepDoc[] = [];
-  const bySize = prep.docs.filter((d) => d.kind === "code").sort((a, b) => b.text.length - a.text.length);
-  for (const d of bySize) {
+  for (const d of [...prep.docs].sort((a, b) => b.text.length - a.text.length)) {
     if (total() <= maxChars) break;
-    blocks.set(d.id, `\n\n=== ${docLabel(d)} ===\n${codeOverview(d.text, CODE_OVERVIEW_CHARS)}`);
+    const part =
+      d.kind === "code"
+        ? codeOverview(d.text, CODE_OVERVIEW_CHARS)
+        : `${d.text.slice(0, SHRUNK_DOC_CHARS)}\n… (resten av dokumentet visas inte här; sök i materialet)`;
+    if (part.length >= d.text.length) continue;
+    blocks.set(d.id, `\n\n=== ${docLabel(d)} (visas bara delvis) ===\n${part}`);
     shrunk.push(d);
   }
   const context = (head.join("\n\n") + prep.docs.map((d) => blocks.get(d.id)).join("")).slice(0, maxChars);
-  const snippets = shrunk.length ? codeSnippets({ ...prep, docs: shrunk }, query, DEEP_SNIPPET_CHARS) : "";
-  return { context, snippets };
+  const ids = new Set(shrunk.map((d) => d.id));
+  const snippets = shrunk.length ? materialSnippets(prep, query, DEEP_SNIPPET_CHARS, (d) => ids.has(d.id)) : "";
+  return { context, snippets, library: shrunk.map((d) => ({ name: docLabel(d), text: d.text })) };
 }
 
 /** The documents for making a brief; code projects send their most telling part. */

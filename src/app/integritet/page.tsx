@@ -56,7 +56,8 @@ export default function Page() {
         <li className={LI}>Ljudet från dina samtal sparas aldrig.</li>
         <li className={LI}>
           Texten från samtal, sammanfattningar och dina förberedelser (CV, dokument, länkar) sparas bara på din egen telefon, inte hos
-          oss. Du raderar dem i appen.
+          oss. De hör till ditt konto: lånar någon din telefon och loggar in med sitt eget konto ser de inte dina. Du raderar dem i
+          appen.
         </li>
         <li className={LI}>
           Minnet (det Aivia har hört under dagen) ligger också bara på din telefon och raderas själv efter 1, 7, 14 eller 30 dagar,
@@ -115,7 +116,7 @@ export default function Page() {
           (confirmed by text, used only for codes and to stop repeated free trials, never for marketing), an encrypted password, the id
           from Google, Apple, Facebook or Microsoft if you sign in with them, when you accepted the terms, your balance and usage, and
           hashed marks that stop repeated free trials. Audio is never stored. Transcripts, summaries and prep documents are only saved on
-          your phone. Audio and text are sent to AI providers only to transcribe and answer. Stripe handles payments, Resend sends
+          your phone, separately for each account signed in on it. Audio and text are sent to AI providers only to transcribe and answer. Stripe handles payments, Resend sends
           emails and 46elks sends text messages. We never sell your data. See also the{" "}
           <Link className="text-violet-300 underline" href="/villkor#en">
             terms

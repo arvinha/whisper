@@ -58,7 +58,7 @@ export const da: Dict = {
     airpodsTip:
       "Bliver svaret lavt, så snart du selv begynder at tale? Så er det AirPods, der skruer ned. Slå det fra på iPhone: Indstillinger → dine AirPods → Samtalebevidsthed → Fra.",
     privacy:
-      "Lyden gemmes aldrig. Korte lydklip og tekst sendes til AI-tjenesten. Hukommelsen, forberedelser, opsummeringer og kalender gemmes kun på denne telefon. Hukommelsen slettes af sig selv efter det antal dage, du har valgt i Indstillinger.",
+      "Lyden gemmes aldrig. Korte lydklip og tekst sendes til AI-tjenesten. Hukommelsen, forberedelser, opsummeringer og kalender gemmes kun på denne telefon og hver for sig for hver konto: låner nogen telefonen med deres egen konto, ser de ikke dine. Hukommelsen slettes af sig selv efter det antal dage, du har valgt i Indstillinger.",
     nextUp: "Næste i kalenderen",
     seeAll: "Vis alle",
     prepActive: (files, questions) =>
@@ -143,6 +143,18 @@ export const da: Dict = {
     minutes: (n: number) => `${n} min`,
     hours: (n: number) => `${n} t`,
     explain: (perMinute: string, perAnswer: string) => `${perMinute}/min når nogen taler, ${perAnswer}/svar`,
+  },
+  legacy: {
+    title: "Er det her dit?",
+    text: "Nu hører forberedelser, profil og hukommelse til kontoen. Det her blev gemt på telefonen før:",
+    preps: (n: number) => plural(n, "forberedelse", "forberedelser"),
+    summaries: (n: number) => plural(n, "opsummering", "opsummeringer"),
+    agenda: (n: number) => plural(n, "ting i kalenderen", "ting i kalenderen"),
+    profile: "din profiltekst",
+    memory: "det Whisper har hørt",
+    mine: "Ja, flyt det til min konto",
+    notMine: "Ikke mit",
+    note: "Kun den, der svarer ja, får det. Svarer du ”Ikke mit”, bliver det liggende urørt til den, det tilhører.",
   },
   account: {
     startChoice: "Hvordan vil du starte?",
@@ -265,7 +277,7 @@ export const da: Dict = {
     uiLangHint: "Sproget på knapper og tekster. Påvirker ikke, hvilket sprog Aivia lytter og svarer på.",
     uiLangAuto: "Telefonens",
     about: "Om dig",
-    aboutHint: "Bruges, når nogen spørger om dig, så svarene lyder som dig. Bliver på din telefon og sendes kun med spørgsmålene.",
+    aboutHint: "Bruges, når nogen spørger om dig, så svarene lyder som dig. Bliver på din telefon, hører til din konto og sendes kun med spørgsmålene.",
     aboutPlaceholder: "F.eks. Arvin, 25, civilingeniør i datateknik, bor i København, kan lide AI og træning.",
     style: "Svarenes stil",
     styleHint: "Smart = afslappet og skarpt. Ekspert = præcist og autoritativt. Kvik = med et snedigt twist.",

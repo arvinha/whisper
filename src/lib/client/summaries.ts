@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type { Dict } from "@/lib/i18n";
 import type { SummaryEvent, SummaryResult } from "@/lib/shared/types";
+import { onOwnerChange, ownedKey } from "./owner";
 
 export interface SavedSummary extends SummaryResult {
   id: string;
@@ -16,11 +17,21 @@ let current: SavedSummary[] = EMPTY;
 let loaded = false;
 const listeners = new Set<() => void>();
 
+if (typeof window !== "undefined") {
+  onOwnerChange(() => {
+    loaded = false;
+    current = EMPTY;
+    listeners.forEach((l) => l());
+  });
+}
+
 function load() {
   if (loaded || typeof window === "undefined") return;
   loaded = true;
+  const key = ownedKey(STORAGE_KEY);
+  if (!key) return;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(key);
     const list: unknown = raw ? JSON.parse(raw) : [];
     current = Array.isArray(list) ? (list as SavedSummary[]).filter((s) => s && typeof s.id === "string") : [];
   } catch {
@@ -31,7 +42,8 @@ function load() {
 function persist(next: SavedSummary[]) {
   current = next;
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    const key = ownedKey(STORAGE_KEY);
+    if (key) window.localStorage.setItem(key, JSON.stringify(next));
   } catch {
     // storage full: keep in memory
   }

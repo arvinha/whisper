@@ -14,6 +14,7 @@ import { AccountPanel, AuthForm } from "./Account";
 import { AskBox } from "./AskBox";
 import { BalanceBar } from "./BalanceBar";
 import { InboxCard } from "./InboxCard";
+import { LegacyCard } from "./LegacyCard";
 import { providerName, TTS_NAME } from "./phase";
 import { useSpokenLang, VoiceMissingNote } from "./VoiceNote";
 
@@ -86,6 +87,7 @@ function StatusCard({ state }: { state: EngineState }) {
           <AuthForm config={config} />
         </div>
       )}
+      {config.account && <LegacyCard />}
       {config.account && !config.account.active && (
         <div className="rounded-2xl border border-rose-400/30 bg-rose-950/30 p-4">
           <AccountPanel config={config} account={config.account} />

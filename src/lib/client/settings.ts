@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { AnswerStyle, LanguagePref } from "@/lib/shared/types";
+import { onOwnerChange, ownedKey, PROFILE_KEY } from "./owner";
 
 export type VoicePref = "cloud" | "device";
 export type CuePref = "voice" | "short" | "beep";
@@ -91,15 +92,37 @@ let current: Settings = DEFAULT_SETTINGS;
 let loaded = false;
 const listeners = new Set<() => void>();
 
+/** The profile is about a person, so it belongs to whoever is signed in; the rest is the phone's. */
+function readProfile(): string {
+  const key = ownedKey(PROFILE_KEY);
+  try {
+    return (key && window.localStorage.getItem(key)) || "";
+  } catch {
+    return "";
+  }
+}
+
+if (typeof window !== "undefined") {
+  onOwnerChange(() => {
+    if (!loaded) return;
+    const profile = readProfile();
+    if (profile === current.profile) return;
+    current = { ...current, profile };
+    listeners.forEach((l) => l());
+  });
+}
+
 function load() {
   if (loaded || typeof window === "undefined") return;
   loaded = true;
+  const profile = readProfile();
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (raw) current = sanitize(JSON.parse(raw) as Record<string, unknown>);
   } catch {
     current = DEFAULT_SETTINGS;
   }
+  current = { ...current, profile };
 }
 
 export function getSettings(): Settings {
@@ -111,7 +134,10 @@ export function updateSettings(patch: Partial<Settings>) {
   load();
   current = sanitize({ ...current, ...patch });
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(current));
+    const { profile, ...phone } = current;
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(phone));
+    const key = ownedKey(PROFILE_KEY);
+    if (key && "profile" in patch) window.localStorage.setItem(key, profile);
   } catch {
     // private mode or storage full: keep in memory
   }

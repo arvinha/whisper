@@ -58,7 +58,7 @@ export const en: Dict = {
     airpodsTip:
       "Does the answer go quiet as soon as you start talking? That's AirPods lowering the volume. Turn it off on iPhone: Settings → your AirPods → Conversation Awareness → Off.",
     privacy:
-      "Audio is never stored. Short audio clips and text are sent to the AI service. The memory, preparations, summaries and the calendar are only stored on this phone. The memory deletes itself after the number of days you pick in Settings.",
+      "Audio is never stored. Short audio clips and text are sent to the AI service. The memory, preparations, summaries and the calendar are only stored on this phone, separately for each account: someone who borrows the phone with their own account does not see yours. The memory deletes itself after the number of days you pick in Settings.",
     nextUp: "Next in your calendar",
     seeAll: "See all",
     prepActive: (files, questions) =>
@@ -143,6 +143,18 @@ export const en: Dict = {
     minutes: (n: number) => `${n} min`,
     hours: (n: number) => `${n} h`,
     explain: (perMinute: string, perAnswer: string) => `${perMinute}/min while someone talks, ${perAnswer}/answer`,
+  },
+  legacy: {
+    title: "Is this yours?",
+    text: "Preparations, profile and memory now belong to the account. This was saved on the phone before that:",
+    preps: (n: number) => plural(n, "preparation", "preparations"),
+    summaries: (n: number) => plural(n, "summary", "summaries"),
+    agenda: (n: number) => plural(n, "calendar item", "calendar items"),
+    profile: "your profile text",
+    memory: "what Whisper has heard",
+    mine: "Yes, move it to my account",
+    notMine: "Not mine",
+    note: "Only whoever says yes gets it. If you tap “Not mine”, it stays untouched for whoever it belongs to.",
   },
   account: {
     startChoice: "How do you want to start?",
@@ -263,7 +275,7 @@ export const en: Dict = {
     uiLangHint: "The language of buttons and texts. It does not change the language Aivia listens and answers in.",
     uiLangAuto: "Phone's",
     about: "About you",
-    aboutHint: "Used when someone asks about you, so the answers sound like you. Stays on your phone and is only sent with the questions.",
+    aboutHint: "Used when someone asks about you, so the answers sound like you. Stays on your phone, belongs to your account and is only sent with the questions.",
     aboutPlaceholder: "E.g. Arvin, 25, computer engineer, lives in Copenhagen, into AI and training.",
     style: "Answer style",
     styleHint: "Smart = relaxed and sharp. Expert = precise and authoritative. Witty = with a clever twist.",

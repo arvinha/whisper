@@ -17,6 +17,7 @@ import {
 } from "@/lib/client/preps";
 import type { ExtractResult, GithubRepo, PrepBrief, PrepKind } from "@/lib/shared/types";
 import { CloseIcon } from "./icons";
+import { LegacyCard } from "./LegacyCard";
 import { Chips } from "./NotesPage";
 import { Page } from "./Page";
 
@@ -533,6 +534,7 @@ export function PrepPage() {
         <PrepEditor key={open.id} prep={open} active={open.id === activeId} onBack={() => setOpenId(null)} />
       ) : (
         <div className="space-y-4">
+          <LegacyCard />
           <p className="text-sm leading-relaxed text-zinc-400">{t.prep.intro}</p>
           <button
             type="button"

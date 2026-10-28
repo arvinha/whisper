@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { addAgendaItems, getAgenda, localMs, type NewAgendaItem } from "./agenda";
+import { onOwnerChange, ownedKey } from "./owner";
 
 /** Appointments and to-dos Aivia heard by itself, waiting for the user to add or ignore them. */
 export interface Suggestion {
@@ -22,7 +23,18 @@ let dismissed: Array<{ key: string; at: number }> = [];
 let loaded = false;
 const listeners = new Set<() => void>();
 
-function readJson(key: string): unknown {
+if (typeof window !== "undefined") {
+  onOwnerChange(() => {
+    loaded = false;
+    items = EMPTY;
+    dismissed = [];
+    listeners.forEach((l) => l());
+  });
+}
+
+function readJson(base: string): unknown {
+  const key = ownedKey(base);
+  if (!key) return null;
   try {
     const raw = window.localStorage.getItem(key);
     return raw ? JSON.parse(raw) : null;
@@ -43,8 +55,10 @@ function load() {
 
 function persist() {
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-    window.localStorage.setItem(DISMISSED_KEY, JSON.stringify(dismissed));
+    const itemsKey = ownedKey(STORAGE_KEY);
+    const dismissedKey = ownedKey(DISMISSED_KEY);
+    if (itemsKey) window.localStorage.setItem(itemsKey, JSON.stringify(items));
+    if (dismissedKey) window.localStorage.setItem(dismissedKey, JSON.stringify(dismissed));
   } catch {
     // storage full: keep in memory
   }

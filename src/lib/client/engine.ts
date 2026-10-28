@@ -29,6 +29,8 @@ import { FEATURES } from "@/lib/shared/features";
 import { getT, uiLang } from "./i18n";
 import { codeSnippets } from "./codeSearch";
 import { briefDocs, deepMaterial, getActivePrep, prepContext, type Prep } from "./preps";
+import { claimLegacy } from "./legacy";
+import { legacyWaiting, onOwnerChange, ownedKey, ownerOf, setOwner } from "./owner";
 import { getSettings, subscribeSettings, updateSettings } from "./settings";
 import { Speaker, type BeepKind, type VoiceBackend } from "./speaker";
 import { Transcriber, type TranscribedSegment } from "./transcriber";
@@ -309,6 +311,8 @@ export class Engine {
   private spokenLog: SpokenEntry[] = [];
   private speechEndedAt = 0;
   private transcriptRestored = false;
+  /** Where the transcript is saved: the signed-in person's own key. */
+  private transcriptKey: string | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
   private level = { rms: 0, speech: false };
@@ -335,6 +339,33 @@ export class Engine {
       this.speaker.beep("ready");
     };
     subscribeSettings(() => this.onSettingsChanged());
+    onOwnerChange(() => this.onOwnerChanged());
+  }
+
+  /** Someone else signed in (or out): the transcript on screen was the previous person's. */
+  private onOwnerChanged() {
+    if (!this.transcriptRestored) return;
+    if (ownedKey(TRANSCRIPT_KEY) === this.transcriptKey) {
+      // Same person; things from before may just have become theirs.
+      if (this.lines.length === 0) {
+        this.transcriptRestored = false;
+        this.restoreTranscript();
+      }
+      return;
+    }
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = null;
+    this.saveTranscript();
+    if (this.state.phase !== "idle") this.stop();
+    this.lines = [];
+    this.answered = [];
+    this.spokenLog = [];
+    this.lastSpoken = null;
+    this.prefetch = null;
+    this.set({ history: [], current: null });
+    this.publishLines();
+    this.transcriptRestored = false;
+    this.restoreTranscript();
   }
 
   // ---- store -------------------------------------------------------------------------------
@@ -382,6 +413,7 @@ export class Engine {
     this.set({ configLoading: true, configError: null });
     try {
       const config = await this.api.config();
+      this.adoptOwner(config);
       this.set({
         config,
         configLoading: false,
@@ -395,6 +427,15 @@ export class Engine {
       });
       return null;
     }
+  }
+
+  /**
+   * The phone shows the signed-in person's own things. A personal code is one person's phone, so
+   * what was saved before becomes theirs; with an account the person is asked first.
+   */
+  private adoptOwner(config: PublicConfig) {
+    setOwner(ownerOf(config));
+    if (config.authorized && !config.account && legacyWaiting()) void claimLegacy();
   }
 
   /** Charges an answer the user asked for, in the background so the answer is never held up. */
@@ -416,6 +457,7 @@ export class Engine {
   async refreshConfig(): Promise<PublicConfig | null> {
     try {
       const config = await this.api.config();
+      this.adoptOwner(config);
       this.set({ config, configError: null, needsPassword: config.passwordRequired && !config.authorized });
       return config;
     } catch {
@@ -502,6 +544,7 @@ export class Engine {
   logout() {
     if (this.state.phase !== "idle") this.stop();
     updateSettings({ password: "" });
+    setOwner(null);
     void this.loadConfig();
   }
 
@@ -999,12 +1042,15 @@ export class Engine {
   private restoreTranscript() {
     if (this.transcriptRestored || typeof window === "undefined") return;
     this.transcriptRestored = true;
+    const key = ownedKey(TRANSCRIPT_KEY);
+    this.transcriptKey = key;
+    if (!key) return;
     try {
-      const raw = window.localStorage.getItem(TRANSCRIPT_KEY);
+      const raw = window.localStorage.getItem(key);
       if (!raw) return;
       const saved = JSON.parse(raw) as { savedAt?: number; lines?: Line[] };
       if (!saved.savedAt || Date.now() - saved.savedAt > TRANSCRIPT_MAX_AGE_MS || !Array.isArray(saved.lines)) {
-        window.localStorage.removeItem(TRANSCRIPT_KEY);
+        window.localStorage.removeItem(key);
         return;
       }
       this.lines = saved.lines
@@ -1032,10 +1078,11 @@ export class Engine {
   }
 
   private saveTranscript() {
-    if (typeof window === "undefined") return;
+    const key = this.transcriptKey;
+    if (typeof window === "undefined" || !key) return;
     try {
-      if (this.lines.length === 0) window.localStorage.removeItem(TRANSCRIPT_KEY);
-      else window.localStorage.setItem(TRANSCRIPT_KEY, JSON.stringify({ savedAt: Date.now(), lines: this.lines }));
+      if (this.lines.length === 0) window.localStorage.removeItem(key);
+      else window.localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), lines: this.lines }));
     } catch {
       // storage full: the transcript stays in memory
     }

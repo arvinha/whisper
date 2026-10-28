@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { SummaryLine } from "@/lib/shared/types";
+import { onOwnerChange, ownedKey } from "./owner";
 import { wordCount } from "./transcriptFilter";
 
 /**
@@ -94,12 +95,11 @@ export function useMemoryVersion(): number {
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
 
-function openDb(): Promise<IDBDatabase | null> {
-  if (typeof indexedDB === "undefined") return Promise.resolve(null);
-  dbPromise ??= new Promise((resolve) => {
+function openNamed(name: string): Promise<IDBDatabase | null> {
+  return new Promise((resolve) => {
     let req: IDBOpenDBRequest;
     try {
-      req = indexedDB.open(DB_NAME, DB_VERSION);
+      req = indexedDB.open(name, DB_VERSION);
     } catch {
       resolve(null);
       return;
@@ -114,7 +114,74 @@ function openDb(): Promise<IDBDatabase | null> {
     req.onerror = () => resolve(null);
     req.onblocked = () => resolve(null);
   });
+}
+
+/** The signed-in person's own memory; nothing is kept while nobody is signed in. */
+function openDb(): Promise<IDBDatabase | null> {
+  if (typeof indexedDB === "undefined") return Promise.resolve(null);
+  const name = ownedKey(DB_NAME);
+  if (!name) return Promise.resolve(null);
+  if (!dbPromise) {
+    dbPromise = openNamed(name);
+    dbName = name;
+  }
   return dbPromise;
+}
+
+let dbName: string | null = null;
+
+if (typeof window !== "undefined") {
+  onOwnerChange(() => {
+    if (ownedKey(DB_NAME) === dbName) {
+      bump();
+      return;
+    }
+    // What was heard so far belongs to the one who was signed in.
+    const batch = pending;
+    const old = dbPromise;
+    pending = [];
+    dbPromise = null;
+    dbName = null;
+    flushing = flushing.then(async () => {
+      const db = await old;
+      if (db && batch.length > 0) await writeLines(db, batch).catch(() => {});
+      db?.close();
+    });
+    bump();
+  });
+}
+
+async function writeLines(db: IDBDatabase, batch: MemoryLine[]): Promise<void> {
+  const tx = db.transaction("lines", "readwrite");
+  const store = tx.objectStore("lines");
+  for (const line of batch) store.add(plain(line));
+  await finished(tx);
+}
+
+/** Moves what was heard before it belonged to anyone into the signed-in person's memory. */
+export async function adoptLegacyMemory(): Promise<void> {
+  if (typeof indexedDB === "undefined") return;
+  const db = await openDb();
+  if (!db) return;
+  const legacy = await openNamed(DB_NAME);
+  if (!legacy) return;
+  try {
+    const read = legacy.transaction(["lines", "digests"], "readonly");
+    const [lines, digests] = await Promise.all([
+      result(read.objectStore("lines").getAll()) as Promise<MemoryLine[]>,
+      result(read.objectStore("digests").getAll()) as Promise<Digest[]>,
+    ]);
+    if (lines.length > 0 || digests.length > 0) {
+      const tx = db.transaction(["lines", "digests"], "readwrite");
+      for (const line of lines) tx.objectStore("lines").add(plain(line));
+      for (const digest of digests) tx.objectStore("digests").put(digest);
+      await finished(tx);
+    }
+  } finally {
+    legacy.close();
+  }
+  indexedDB.deleteDatabase(DB_NAME);
+  bump();
 }
 
 function finished(tx: IDBTransaction): Promise<void> {
@@ -163,10 +230,7 @@ export function flushMemory(): Promise<void> {
     const db = await openDb();
     if (!db) return;
     try {
-      const tx = db.transaction("lines", "readwrite");
-      const store = tx.objectStore("lines");
-      for (const line of batch) store.add(plain(line));
-      await finished(tx);
+      await writeLines(db, batch);
       bump();
     } catch {
       // storage full or blocked: the lines are only in the live transcript

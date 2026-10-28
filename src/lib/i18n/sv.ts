@@ -56,7 +56,7 @@ export const sv = {
     airpodsTip:
       "Blir svaret tyst så fort du själv börjar prata? Då är det AirPods som sänker ljudet. Stäng av det i iPhone: Inställningar → dina AirPods → Konversationsmedvetenhet → Av.",
     privacy:
-      "Ljudet sparas aldrig. Korta ljudklipp och text skickas till AI-tjänsten. Minnet, förberedelser, sammanfattningar och kalender sparas bara på den här telefonen. Minnet raderas själv efter det antal dagar du valt i Inställningar.",
+      "Ljudet sparas aldrig. Korta ljudklipp och text skickas till AI-tjänsten. Minnet, förberedelser, sammanfattningar och kalender sparas bara på den här telefonen, och var för sig för varje konto: lånar någon telefonen med sitt eget konto ser de inte dina. Minnet raderas själv efter det antal dagar du valt i Inställningar.",
     nextUp: "Nästa i kalendern",
     seeAll: "Visa alla",
     prepActive: (files: number, questions: number) =>
@@ -141,6 +141,18 @@ export const sv = {
     minutes: (n: number) => `${n} min`,
     hours: (n: number) => `${n} tim`,
     explain: (perMinute: string, perAnswer: string) => `${perMinute}/min när någon pratar, ${perAnswer}/svar`,
+  },
+  legacy: {
+    title: "Är det här ditt?",
+    text: "Nu hör förberedelser, profil och minne till kontot. Det här sparades på telefonen innan dess:",
+    preps: (n: number) => plural(n, "förberedelse", "förberedelser"),
+    summaries: (n: number) => plural(n, "sammanfattning", "sammanfattningar"),
+    agenda: (n: number) => plural(n, "sak i kalendern", "saker i kalendern"),
+    profile: "din profiltext",
+    memory: "det Whisper har hört",
+    mine: "Ja, flytta till mitt konto",
+    notMine: "Inte mitt",
+    note: "Bara den som svarar ja får det. Svarar du ”Inte mitt” ligger det kvar orört för den det tillhör.",
   },
   account: {
     section: "Konto",
@@ -263,7 +275,7 @@ export const sv = {
     uiLangHint: "Språket på knappar och texter. Påverkar inte vilket språk Aivia lyssnar och svarar på.",
     uiLangAuto: "Telefonens",
     about: "Om dig",
-    aboutHint: "Används när någon frågar om dig, så att svaren låter som du. Stannar på din telefon och skickas bara med frågorna.",
+    aboutHint: "Används när någon frågar om dig, så att svaren låter som du. Stannar på din telefon, hör till ditt konto och skickas bara med frågorna.",
     aboutPlaceholder: "T.ex. Arvin, 25, civilingenjör i datateknik från KTH, bor i Köpenhamn, gillar AI och träning.",
     style: "Stil på svaren",
     styleHint: "Smart = avslappnat och skarpt. Expert = exakt och auktoritativt. Kvick = med en klurig twist.",

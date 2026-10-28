@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { SummaryEvent, SummaryResult } from "@/lib/shared/types";
+import { onOwnerChange, ownedKey } from "./owner";
 import { getSummaries, type SavedSummary } from "./summaries";
 
 export interface AgendaItem {
@@ -70,11 +71,21 @@ function sanitize(raw: unknown): AgendaItem | null {
   };
 }
 
+if (typeof window !== "undefined") {
+  onOwnerChange(() => {
+    loaded = false;
+    items = EMPTY;
+    listeners.forEach((l) => l());
+  });
+}
+
 function load() {
   if (loaded || typeof window === "undefined") return;
   loaded = true;
+  const key = ownedKey(STORAGE_KEY);
+  if (!key) return;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(key);
     if (raw === null) {
       // First time: bring in what earlier summaries found, without reminding about the past.
       const seeded: AgendaItem[] = [];
@@ -99,7 +110,8 @@ function load() {
 function persist(next: AgendaItem[], notify = true) {
   items = next.slice(0, MAX_ITEMS);
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    const key = ownedKey(STORAGE_KEY);
+    if (key) window.localStorage.setItem(key, JSON.stringify(items));
   } catch {
     // storage full: keep in memory
   }

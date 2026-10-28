@@ -5,7 +5,8 @@ import { takeDueReminders, type AgendaItem } from "@/lib/client/agenda";
 import { startDigester } from "@/lib/client/digester";
 import { getEngine, type InputMode } from "@/lib/client/engine";
 import { FEATURES } from "@/lib/shared/features";
-import { AuthScreen, SetupScreen } from "./Account";
+import type { AccountInfo, PublicConfig } from "@/lib/shared/types";
+import { AccountPanel, AuthScreen, SetupScreen, clearBuyNow, wantsBuyNow } from "./Account";
 import { useT, useUiLang } from "@/lib/client/i18n";
 import { CalendarPage, whenLabel } from "./CalendarPage";
 import { HistorySheet } from "./HistorySheet";
@@ -109,6 +110,28 @@ function useReminders(): [AgendaItem[], () => void] {
   return [due, useCallback(() => setDue([]), [])];
 }
 
+function TopUpSheet({ config, account, onClose }: { config: PublicConfig; account: AccountInfo; onClose: () => void }) {
+  const t = useT();
+  return (
+    <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/60 sm:items-center" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="max-h-[85dvh] w-full max-w-md overflow-y-auto rounded-t-3xl border border-white/10 bg-zinc-950 p-5 pb-8 sm:rounded-3xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <p className="text-lg font-medium">{t.account.section}</p>
+          <button type="button" onClick={onClose} aria-label={t.common.close} className="-mr-1 p-1 text-zinc-400">
+            <CloseIcon width={20} height={20} />
+          </button>
+        </div>
+        <AccountPanel config={config} account={account} upgrade />
+      </div>
+    </div>
+  );
+}
+
 export function PsstApp() {
   const engine = getEngine();
   const state = useSyncExternalStore(engine.subscribe, engine.getState, engine.getServerState);
@@ -116,7 +139,19 @@ export function PsstApp() {
   const [tab, setTab] = useState<Tab>("listen");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [stealthWanted, setStealthWanted] = useState(false);
+  const [topUpOpen, setTopUpOpen] = useState(false);
   const [reminders, dismissReminders] = useReminders();
+  const [buyNowChecked, setBuyNowChecked] = useState(false);
+  const signedIn = !!state.config?.account && state.config.account.reason !== "setup";
+
+  if (signedIn && !buyNowChecked) {
+    setBuyNowChecked(true);
+    if (wantsBuyNow()) setTopUpOpen(true);
+  }
+
+  useEffect(() => {
+    if (topUpOpen) clearBuyNow();
+  }, [topUpOpen]);
 
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -167,7 +202,7 @@ export function PsstApp() {
   if (state.config?.account?.reason === "setup" && !live) {
     return (
       <>
-        <SetupScreen account={state.config.account} />
+        <SetupScreen account={state.config.account} sms={state.config.accounts.sms} />
         <NoticeBar notice={state.notice} onDismiss={() => engine.dismissNotice()} />
       </>
     );
@@ -193,6 +228,7 @@ export function PsstApp() {
             onOpenPrep={() => changeTab("prep")}
             onOpenCalendar={() => changeTab("calendar")}
             onStealth={() => setStealthWanted(true)}
+            onTopUp={() => setTopUpOpen(true)}
           />
         ) : (
           <HomeScreen
@@ -200,6 +236,7 @@ export function PsstApp() {
             onStart={start}
             onOpenPrep={() => changeTab("prep")}
             onOpenCalendar={() => changeTab("calendar")}
+            onTopUp={() => setTopUpOpen(true)}
           />
         )}
       </div>
@@ -236,6 +273,9 @@ export function PsstApp() {
       )}
       {live && state.interrupted && <InterruptedOverlay onResume={() => engine.resume()} />}
       {historyOpen && <HistorySheet history={state.history} onClose={closeHistory} />}
+      {topUpOpen && state.config?.account && (
+        <TopUpSheet config={state.config} account={state.config.account} onClose={() => setTopUpOpen(false)} />
+      )}
     </>
   );
 }

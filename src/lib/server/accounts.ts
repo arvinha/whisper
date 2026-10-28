@@ -8,7 +8,7 @@ import { TERMS_VERSION } from "@/lib/shared/terms";
 import type { AccountInfo, AccountReason, AuthProvider, Plan } from "@/lib/shared/types";
 import disposableDomains from "./disposable-domains.json";
 import { AppError } from "./errors";
-import { smsCountries, smsDailyMax } from "./sms";
+import { smsCountries, smsDailyMax, smsEnabled } from "./sms";
 
 const scryptAsync = promisify(scrypt) as (password: string, salt: Buffer, keylen: number) => Promise<Buffer>;
 
@@ -331,20 +331,20 @@ function markKey(kind: "e" | "p" | "d" | "i", value: string): string {
 }
 
 /**
- * Decides whether an account gets a trial, and remembers the ones that do. Every trial needs a
- * checked phone number; the e-mail, phone, device and network must not have had one before.
+ * Decides whether an account gets a trial, and remembers the ones that do. While texts are on, every
+ * trial needs a checked phone number; the e-mail, phone, device and network must not have had one before.
  */
 function grantTrial(store: Store, email: string, phone: string, origin: Origin, now: number): boolean {
   store.trials = store.trials.filter((m) => now - m.at < (m.key.startsWith("i:") ? IP_WINDOW_MS : MARK_KEEP_MS));
   const emailKey = markKey("e", canonicalEmail(email));
-  const phoneKey = markKey("p", phone);
+  const phoneKey = phone ? markKey("p", phone) : "";
   const deviceKey = origin.device ? markKey("d", origin.device) : "";
   const ipKey = origin.ip && origin.ip !== "local" ? markKey("i", ipNetwork(origin.ip)) : "";
   const used =
-    store.trials.some((m) => m.key === emailKey || m.key === phoneKey || (deviceKey && m.key === deviceKey)) ||
+    store.trials.some((m) => m.key === emailKey || (phoneKey && m.key === phoneKey) || (deviceKey && m.key === deviceKey)) ||
     (ipKey && store.trials.filter((m) => m.key === ipKey && now - m.at < IP_WINDOW_MS).length >= TRIALS_PER_IP);
   if (used) {
-    markPhone(store, phone, now);
+    if (phone) markPhone(store, phone, now);
     return false;
   }
   for (const key of [emailKey, phoneKey, deviceKey, ipKey]) if (key) store.trials.push({ key, at: now });
@@ -368,7 +368,7 @@ function phoneTaken(store: Store, phone: string, exceptId = ""): boolean {
   return store.accounts.some((a) => a.phone === phone && a.id !== exceptId);
 }
 
-/** A new account. Without a checked phone number it gets no trial until one is added. */
+/** A new account. While texts are on, it gets no trial until a checked phone number is added. */
 function newAccount(store: Store, input: { email: string; name: string; origin: Origin; phone?: string; passwordHash?: string }): Account {
   const now = Date.now();
   const account: Account = {
@@ -382,9 +382,9 @@ function newAccount(store: Store, input: { email: string; name: string; origin: 
     balanceOre: 0,
     stripeCustomerId: null,
   };
-  if (input.phone) {
-    account.phone = input.phone;
-    if (!grantTrial(store, input.email, input.phone, input.origin, now)) account.trialDenied = true;
+  if (input.phone) account.phone = input.phone;
+  if (input.phone || !smsEnabled()) {
+    if (!grantTrial(store, input.email, input.phone ?? "", input.origin, now)) account.trialDenied = true;
   } else {
     account.trialPending = true;
   }
@@ -413,10 +413,10 @@ function termsAccepted(value: unknown): void {
   if (value !== true) throw new AppError(400, "bad_request", "Du behöver godkänna villkoren för att fortsätta.");
 }
 
-/** An account must have a checked phone number, today's terms, and a way to log in before it can be used. */
+/** An account must have today's terms, a way to log in and, while texts are on, a checked phone number. */
 function needsSetup(a: Account): boolean {
   const canLogIn = !!a.passwordHash || Object.keys(a.providers ?? {}).length > 0;
-  return !a.phone || a.termsVersion !== TERMS_VERSION || !canLogIn;
+  return (!a.phone && smsEnabled()) || a.termsVersion !== TERMS_VERSION || !canLogIn;
 }
 
 // ---- phone numbers ----------------------------------------------------------------------------
@@ -552,20 +552,20 @@ export async function startSignup(input: {
   if (!name) throw new AppError(400, "bad_request", "Skriv ditt namn.");
   const email = normalizeEmail(input.email);
   checkNewEmail(email);
-  const phone = normalizePhone(input.phone, input.lang);
+  const phone = smsEnabled() ? normalizePhone(input.phone, input.lang) : "";
   const passwordHash = await hashPassword(newPassword(input.password));
   termsAccepted(input.terms);
   const emailCode = newCode();
-  const smsCode = newCode();
+  const smsCode = phone ? newCode() : "";
   await withStore((store) => {
     const now = Date.now();
     if (findByEmail(store, email)) {
       throw new AppError(409, "bad_request", "Det finns redan ett konto med den e-postadressen. Logga in i stället.");
     }
-    if (phoneTaken(store, phone)) {
+    if (phone && phoneTaken(store, phone)) {
       throw new AppError(409, "bad_request", "Det numret hör redan till ett annat konto. Logga in på det i stället.");
     }
-    putSmsCode(store, phone, smsCode, now);
+    if (phone) putSmsCode(store, phone, smsCode, now);
     putEmailCode(store, email, emailCode, now);
     store.signups = store.signups.filter((s) => s.email !== email && s.exp > now);
     store.signups.push({ email, name, phone, passwordHash, exp: now + CODE_MINUTES * 60_000 });
@@ -584,14 +584,22 @@ export function finishSignup(input: { email: unknown; emailCode: unknown; smsCod
     if (!pending) throw new AppError(400, "bad_request", "Koderna har gått ut. Börja om och be om nya koder.");
     const mailEntry = store.codes.find((c) => c.email === email && c.exp > now);
     checkCode(mailEntry, codeHash(email, emailCode), emailCode, "Fel kod från mejlet. Kolla mejlet och försök igen.");
-    const smsEntry = store.smsCodes.find((c) => c.phone === pending.phone && c.exp > now);
-    checkCode(smsEntry, smsHash(pending.phone, smsCode), smsCode, "Fel kod från SMS:et. Kolla SMS:et och försök igen.");
+    if (pending.phone) {
+      const smsEntry = store.smsCodes.find((c) => c.phone === pending.phone && c.exp > now);
+      checkCode(smsEntry, smsHash(pending.phone, smsCode), smsCode, "Fel kod från SMS:et. Kolla SMS:et och försök igen.");
+      store.smsCodes = store.smsCodes.filter((c) => c !== smsEntry);
+    }
     store.codes = store.codes.filter((c) => c !== mailEntry);
-    store.smsCodes = store.smsCodes.filter((c) => c !== smsEntry);
     store.signups = store.signups.filter((s) => s !== pending);
     if (findByEmail(store, email)) throw new AppError(409, "bad_request", "Det finns redan ett konto med den e-postadressen. Logga in i stället.");
-    if (phoneTaken(store, pending.phone)) throw new AppError(409, "bad_request", "Det numret hör redan till ett annat konto.");
-    const account = newAccount(store, { email, name: pending.name, origin: input.origin, phone: pending.phone, passwordHash: pending.passwordHash });
+    if (pending.phone && phoneTaken(store, pending.phone)) throw new AppError(409, "bad_request", "Det numret hör redan till ett annat konto.");
+    const account = newAccount(store, {
+      email,
+      name: pending.name,
+      origin: input.origin,
+      phone: pending.phone || undefined,
+      passwordHash: pending.passwordHash,
+    });
     account.termsVersion = TERMS_VERSION;
     account.termsAcceptedAt = new Date(now).toISOString();
     return account;
@@ -623,7 +631,7 @@ export async function completeAccount(
   input: { phone: unknown; smsCode: unknown; terms: unknown; password?: unknown; lang: string; origin: Origin },
 ): Promise<Account> {
   termsAccepted(input.terms);
-  const phone = normalizePhone(input.phone, input.lang);
+  const phone = smsEnabled() ? normalizePhone(input.phone, input.lang) : "";
   const smsCode = digits(input.smsCode);
   const passwordHash = typeof input.password === "string" && input.password ? await hashPassword(newPassword(input.password)) : "";
   return withStore((store) => {
@@ -633,7 +641,7 @@ export async function completeAccount(
     if (!a.passwordHash && !passwordHash && Object.keys(a.providers ?? {}).length === 0) {
       throw new AppError(400, "bad_request", "Välj ett lösenord.");
     }
-    if (a.phone !== phone) {
+    if (phone && a.phone !== phone) {
       const entry = store.smsCodes.find((c) => c.phone === phone && c.exp > now);
       checkCode(entry, smsHash(phone, smsCode), smsCode, "Fel kod från SMS:et. Kolla SMS:et och försök igen.");
       store.smsCodes = store.smsCodes.filter((c) => c !== entry);
@@ -646,7 +654,7 @@ export async function completeAccount(
     if (a.trialPending) {
       delete a.trialPending;
       if (!grantTrial(store, a.email, phone, input.origin, now)) a.trialDenied = true;
-    } else {
+    } else if (phone) {
       markPhone(store, phone, now);
     }
     return a;

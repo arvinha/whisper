@@ -30,6 +30,29 @@ function errorText(err: unknown, t: Dict): string {
   return err.message;
 }
 
+const BUY_NOW_KEY = "psst.buyNow";
+
+/** Remembers across the e-mail code step that the new customer wants to top up right away. */
+function rememberBuyNow(buy: boolean) {
+  try {
+    if (buy) localStorage.setItem(BUY_NOW_KEY, "1");
+    else localStorage.removeItem(BUY_NOW_KEY);
+  } catch {}
+}
+
+/** True after a sign-up where the customer chose to buy right away, until clearBuyNow. */
+export function wantsBuyNow(): boolean {
+  try {
+    return localStorage.getItem(BUY_NOW_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function clearBuyNow() {
+  rememberBuyNow(false);
+}
+
 const PRIMARY = "w-full rounded-xl bg-violet-500 py-3 font-medium text-white disabled:opacity-40";
 const LINK = "text-sm text-violet-300 active:text-violet-200";
 
@@ -140,13 +163,13 @@ function CodeInput({
 
 /**
  * Sign up or log in: Apple/Google/Microsoft, a new account (e-mail, mobile number, password,
- * terms; checked with one code by e-mail and one by text), a password, or a family code.
+ * terms; checked with one code by e-mail, plus one by text once SMS is set up), a password, or a family code.
  */
 export function AuthForm({ config, onDone }: { config: PublicConfig; onDone?: () => void }) {
   const t = useT();
   const engine = getEngine();
   const { mail, sms, providers, enabled } = config.accounts;
-  const canSignUp = enabled && mail && sms;
+  const canSignUp = enabled && mail;
   const [step, setStep] = useState<Step>(enabled && (canSignUp || providers.length > 0) ? "start" : enabled ? "password" : "family");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -154,6 +177,7 @@ export function AuthForm({ config, onDone }: { config: PublicConfig; onDone?: ()
   const [sentPhone, setSentPhone] = useState("");
   const [password, setPassword] = useState("");
   const [terms, setTerms] = useState(false);
+  const [buyNow, setBuyNow] = useState(false);
   const [code, setCode] = useState("");
   const [smsCode, setSmsCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -197,11 +221,12 @@ export function AuthForm({ config, onDone }: { config: PublicConfig; onDone?: ()
     e?.preventDefault();
     if (!name.trim()) return setError(t.account.badName);
     if (!EMAIL_RE.test(email.trim())) return setError(t.account.badEmail);
-    if (!phone.trim()) return setError(t.account.badPhone);
+    if (sms && !phone.trim()) return setError(t.account.badPhone);
     if (password.length < 8) return setError(t.account.shortPassword);
     if (!terms) return setError(t.account.needTerms);
+    rememberBuyNow(buyNow);
     void run(async () => {
-      setSentPhone(await engine.signUp({ name: name.trim(), email: email.trim(), phone, password, terms }));
+      setSentPhone(await engine.signUp({ name: name.trim(), email: email.trim(), phone: sms ? phone : "", password, terms }));
       if (step === "signupCodes") setInfo(t.account.resent);
       else go("signupCodes");
     });
@@ -254,18 +279,20 @@ export function AuthForm({ config, onDone }: { config: PublicConfig; onDone?: ()
           className={input}
         />
         {emailInput()}
-        <div className="space-y-1.5">
-          <input
-            type="tel"
-            inputMode="tel"
-            autoComplete="tel"
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            placeholder={t.account.phone}
-            className={input}
-          />
-          <p className="text-xs leading-relaxed text-zinc-500">{t.account.phoneHint}</p>
-        </div>
+        {sms && (
+          <div className="space-y-1.5">
+            <input
+              type="tel"
+              inputMode="tel"
+              autoComplete="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder={t.account.phone}
+              className={input}
+            />
+            <p className="text-xs leading-relaxed text-zinc-500">{t.account.phoneHint}</p>
+          </div>
+        )}
         <input
           type="password"
           autoComplete="new-password"
@@ -274,6 +301,26 @@ export function AuthForm({ config, onDone }: { config: PublicConfig; onDone?: ()
           placeholder={`${t.account.password} (${t.account.passwordHint.toLowerCase()})`}
           className={input}
         />
+        {config.accounts.billing && (
+          <fieldset className="space-y-1.5">
+            <legend className="mb-1.5 text-sm text-zinc-300">{t.account.startChoice}</legend>
+            <div className="grid grid-cols-2 gap-2">
+              {[false, true].map((buy) => (
+                <button
+                  key={String(buy)}
+                  type="button"
+                  aria-pressed={buyNow === buy}
+                  onClick={() => setBuyNow(buy)}
+                  className={`rounded-xl border px-3 py-2.5 text-sm font-medium ${
+                    buyNow === buy ? "border-violet-400/70 bg-violet-500/20 text-white" : "border-white/10 bg-white/5 text-zinc-300"
+                  }`}
+                >
+                  {buy ? t.account.startBuy : t.account.startTrial}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+        )}
         <TermsCheck checked={terms} onChange={setTerms} />
         {message}
         <button type="submit" disabled={busy} className={PRIMARY}>
@@ -300,11 +347,13 @@ export function AuthForm({ config, onDone }: { config: PublicConfig; onDone?: ()
         }}
         className="space-y-3"
       >
-        <p className="text-sm leading-relaxed text-zinc-300">{t.account.codesSent(email.trim(), sentPhone)}</p>
+        <p className="text-sm leading-relaxed text-zinc-300">
+          {sentPhone ? t.account.codesSent(email.trim(), sentPhone) : t.account.codeSent(email.trim())}
+        </p>
         <CodeInput value={code} onChange={setCode} label={t.account.mailCode} autoFocus />
-        <CodeInput value={smsCode} onChange={setSmsCode} label={t.account.smsCode} fromSms />
+        {sentPhone && <CodeInput value={smsCode} onChange={setSmsCode} label={t.account.smsCode} fromSms />}
         {message}
-        <button type="submit" disabled={busy || code.length !== 6 || smsCode.length !== 6} className={PRIMARY}>
+        <button type="submit" disabled={busy || code.length !== 6 || (!!sentPhone && smsCode.length !== 6)} className={PRIMARY}>
           {busy ? "…" : t.account.createAccount}
         </button>
         <div className="flex justify-between">
@@ -312,7 +361,7 @@ export function AuthForm({ config, onDone }: { config: PublicConfig; onDone?: ()
             {t.account.changeDetails}
           </button>
           <button type="button" disabled={busy} onClick={() => submitSignup()} className={LINK}>
-            {t.account.resendCodes}
+            {sentPhone ? t.account.resendCodes : t.account.resend}
           </button>
         </div>
         <p className="text-xs leading-relaxed text-zinc-500">{t.account.checkSpam}</p>
@@ -534,7 +583,7 @@ export function AuthScreen({ config }: { config: PublicConfig }) {
  * Shown to a signed-in account that lacks a checked mobile number, today's terms or a way to log
  * in (made before these rules, or with Google/Apple/Microsoft). Nothing else works until it is done.
  */
-export function SetupScreen({ account }: { account: AccountInfo }) {
+export function SetupScreen({ account, sms }: { account: AccountInfo; sms: boolean }) {
   const t = useT();
   const engine = getEngine();
   const [phone, setPhone] = useState(account.phone);
@@ -546,7 +595,7 @@ export function SetupScreen({ account }: { account: AccountInfo }) {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
-  const phoneChecked = !!account.phone && phone === account.phone;
+  const phoneChecked = !sms || (!!account.phone && phone === account.phone);
   const termsOnly = phoneChecked && !account.needsPassword;
   const ready =
     (phoneChecked || (sentTo !== "" && smsCode.length === 6)) && terms && (!account.needsPassword || password.length >= 8);
@@ -579,7 +628,7 @@ export function SetupScreen({ account }: { account: AccountInfo }) {
     if (account.needsPassword && password.length < 8) return setError(t.account.shortPassword);
     void run(() =>
       engine.completeAccount({
-        phone: phoneChecked ? account.phone : sentTo,
+        phone: !sms ? "" : phoneChecked ? account.phone : sentTo,
         smsCode,
         terms,
         password: account.needsPassword ? password : undefined,
@@ -593,7 +642,7 @@ export function SetupScreen({ account }: { account: AccountInfo }) {
         <>
           <p className="mt-4 text-lg font-medium text-zinc-100">{t.account.setupTitle}</p>
           <p className="mt-2 text-balance text-sm leading-relaxed text-zinc-400">
-            {termsOnly ? t.account.setupTermsOnly : t.account.setupText}
+            {termsOnly ? t.account.setupTermsOnly : sms ? t.account.setupText : t.account.setupPasswordText}
           </p>
         </>
       }
@@ -608,19 +657,21 @@ export function SetupScreen({ account }: { account: AccountInfo }) {
       <form onSubmit={finish} className="space-y-3">
         {!termsOnly && (
           <>
-            <input
-              type="tel"
-              inputMode="tel"
-              autoComplete="tel"
-              value={phone}
-              onChange={(e) => {
-                setPhone(e.target.value);
-                setSentTo("");
-                setSmsCode("");
-              }}
-              placeholder={t.account.phone}
-              className={input}
-            />
+            {sms && (
+              <input
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                value={phone}
+                onChange={(e) => {
+                  setPhone(e.target.value);
+                  setSentTo("");
+                  setSmsCode("");
+                }}
+                placeholder={t.account.phone}
+                className={input}
+              />
+            )}
             {!phoneChecked && (
               <button
                 type="button"
@@ -685,12 +736,12 @@ function statusLine(a: AccountInfo, currency: Currency, t: Dict): string {
 }
 
 /** Free minutes, balance and the ways to top up. */
-export function AccountPanel({ config, account }: { config: PublicConfig; account: AccountInfo }) {
+export function AccountPanel({ config, account, upgrade = false }: { config: PublicConfig; account: AccountInfo; upgrade?: boolean }) {
   const t = useT();
   const lang = useUiLang();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [upgrading, setUpgrading] = useState(false);
+  const [upgrading, setUpgrading] = useState(upgrade);
   const [startNow, setStartNow] = useState(false);
   const currency = accountCurrency(account, lang);
   // No prices while the free minutes last unless the user asks for them; they appear when they are over.

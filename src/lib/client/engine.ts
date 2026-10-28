@@ -108,6 +108,19 @@ export interface EngineState {
   micLabel: string;
   deviceVoiceProblem: boolean;
   assist: AssistView | null;
+  /** What the current or last conversation used, for the balance bar. Null before the first one. */
+  usage: SessionUsage | null;
+}
+
+export interface SessionUsage {
+  startedAt: number;
+  endedAt: number | null;
+  /** Answers the user asked for. */
+  answers: number;
+  /** Taken from the bought balance, in öre. */
+  spentOre: number;
+  /** Free trial seconds used. */
+  freeSeconds: number;
 }
 
 interface Line {
@@ -243,7 +256,11 @@ const INITIAL_STATE: EngineState = {
   micLabel: "",
   deviceVoiceProblem: false,
   assist: null,
+  usage: null,
 };
+
+/** Listening is charged on the server, so the balance is fetched this often during a conversation. */
+const USAGE_REFRESH_MS = 45_000;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -310,6 +327,7 @@ export class Engine {
   private diagTimer: ReturnType<typeof setTimeout> | null = null;
   private wakeUntil = 0;
   private nextAssistId = 1;
+  private usageTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     this.speaker.onDeviceVoiceProblem = () => {
@@ -333,6 +351,16 @@ export class Engine {
   getLevel = () => this.level;
 
   private set(patch: Partial<EngineState>) {
+    const usage = this.state.usage;
+    const before = this.state.config?.account;
+    const after = patch.config?.account;
+    if (usage && before && after) {
+      const spent = Math.max(0, before.balanceOre - after.balanceOre);
+      const free = Math.max(0, before.trialSecondsLeft - after.trialSecondsLeft);
+      if (spent > 0 || free > 0) {
+        patch = { ...patch, usage: { ...usage, spentOre: usage.spentOre + spent, freeSeconds: usage.freeSeconds + free } };
+      }
+    }
     this.state = { ...this.state, ...patch };
     this.listeners.forEach((l) => l());
   }
@@ -373,6 +401,8 @@ export class Engine {
   private chargeAnswer() {
     const config = this.state.config;
     if (!config?.account) return;
+    const usage = this.state.usage;
+    if (usage) this.set({ usage: { ...usage, answers: usage.answers + 1 } });
     this.api.answered().then(
       ({ account }) => {
         const current = this.state.config;
@@ -516,7 +546,9 @@ export class Engine {
     });
     void this.wake.enable();
     document.addEventListener("visibilitychange", this.onVisibilityChange);
-    this.set({ phase: "starting", mode, interrupted: false, notice: null, deviceVoiceProblem: false });
+    const usage = this.state.config?.account ? { startedAt: Date.now(), endedAt: null, answers: 0, spentOre: 0, freeSeconds: 0 } : null;
+    this.set({ phase: "starting", mode, interrupted: false, notice: null, deviceVoiceProblem: false, usage });
+    if (usage) this.usageTimer = setInterval(() => void this.refreshConfig(), USAGE_REFRESH_MS);
     this.diag(`start (${mode}), ${navigator.userAgent.slice(0, 120)}`);
 
     void this.startAsync(mode, session);
@@ -617,7 +649,10 @@ export class Engine {
     this.prefetch = null;
     this.detail = null;
     this.level = { rms: 0, speech: false };
-    this.set({ phase: "idle", mode: null, interrupted: false, pendingTranscriptions: 0, micLabel: "" });
+    if (this.usageTimer) clearInterval(this.usageTimer);
+    this.usageTimer = null;
+    const usage = this.state.usage && !this.state.usage.endedAt ? { ...this.state.usage, endedAt: Date.now() } : this.state.usage;
+    this.set({ phase: "idle", mode: null, interrupted: false, pendingTranscriptions: 0, micLabel: "", usage });
     if (this.state.config?.account) void this.refreshConfig();
   }
 

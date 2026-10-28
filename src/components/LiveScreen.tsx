@@ -11,6 +11,7 @@ import { HistoryIcon, MoonIcon, NotesIcon, RepeatIcon, SendIcon, SparkIcon, Stop
 import { Orb } from "./Orb";
 import { AuthForm } from "./Account";
 import { AssistResult } from "./AskBox";
+import { BalanceBar } from "./BalanceBar";
 import { InboxCard } from "./InboxCard";
 import { PasswordForm } from "./PasswordForm";
 import { phaseInfo, providerName, timeLabel } from "./phase";
@@ -121,6 +122,7 @@ export function LiveScreen({
   onOpenPrep,
   onOpenCalendar,
   onStealth,
+  onTopUp,
 }: {
   state: EngineState;
   onOpenHistory: () => void;
@@ -128,6 +130,7 @@ export function LiveScreen({
   onOpenPrep: () => void;
   onOpenCalendar: () => void;
   onStealth: () => void;
+  onTopUp: () => void;
 }) {
   const t = useT();
   const engine = getEngine();
@@ -157,6 +160,7 @@ export function LiveScreen({
           <StopIcon width={16} height={16} /> {t.live.stop}
         </button>
       </header>
+      <BalanceBar state={state} onTopUp={onTopUp} />
 
       {state.needsPassword && (
         <div className="mb-2 rounded-2xl border border-white/10 bg-white/[0.03] p-4">

@@ -3,15 +3,16 @@
 import { useAgenda, useNow } from "@/lib/client/agenda";
 import type { EngineState, InputMode } from "@/lib/client/engine";
 import { getEngine } from "@/lib/client/engine";
-import { useT, useUiLang } from "@/lib/client/i18n";
+import { useT } from "@/lib/client/i18n";
 import { usePreps } from "@/lib/client/preps";
 import { useSettings } from "@/lib/client/settings";
 import { useDeviceVoiceName } from "@/lib/client/voices";
 import { FEATURES } from "@/lib/shared/features";
 import { upcoming, whenLabel } from "./CalendarPage";
 import { BriefcaseIcon, CalendarIcon, ChevronIcon, HeadphonesIcon, KeyboardIcon, MicIcon } from "./icons";
-import { AccountPanel, AuthForm, accountCurrency, formatMoney, trialMinutesLeft } from "./Account";
+import { AccountPanel, AuthForm } from "./Account";
 import { AskBox } from "./AskBox";
+import { BalanceBar } from "./BalanceBar";
 import { InboxCard } from "./InboxCard";
 import { providerName, TTS_NAME } from "./phase";
 import { useSpokenLang, VoiceMissingNote } from "./VoiceNote";
@@ -42,7 +43,6 @@ function Logo() {
 
 function StatusCard({ state }: { state: EngineState }) {
   const t = useT();
-  const lang = useUiLang();
   const settings = useSettings();
   const deviceVoice = useDeviceVoiceName(useSpokenLang());
   const { config, configLoading, configError } = state;
@@ -77,15 +77,6 @@ function StatusCard({ state }: { state: EngineState }) {
     [t.home.answersWith, config.llm ? `${providerName(config.llm.provider, t)} · ${config.llm.model}` : null],
     [t.home.voice, voice],
   ];
-  const account = config.account;
-  if (account?.active) {
-    rows.unshift([
-      t.account.section,
-      account.plan === "prepaid"
-        ? `${t.account.planName.prepaid} · ${t.account.balanceShort(formatMoney(account.balanceOre, accountCurrency(account, lang), t))}`
-        : `${t.account.planName.trial} · ${t.account.trialMinutesLeft(trialMinutesLeft(account))}`,
-    ]);
-  }
   const ok = !!config.llm && !!config.stt && config.problems.length === 0;
 
   return (
@@ -220,11 +211,13 @@ export function HomeScreen({
   onStart,
   onOpenPrep,
   onOpenCalendar,
+  onTopUp,
 }: {
   state: EngineState;
   onStart: (mode: InputMode) => void;
   onOpenPrep: () => void;
   onOpenCalendar: () => void;
+  onTopUp: () => void;
 }) {
   const t = useT();
   const engine = getEngine();
@@ -236,6 +229,7 @@ export function HomeScreen({
       <header className="flex items-center py-3">
         <Wordmark />
       </header>
+      <BalanceBar state={state} onTopUp={onTopUp} />
 
       <section className="flex flex-col items-center pt-1 pb-6 text-center">
         <Logo />

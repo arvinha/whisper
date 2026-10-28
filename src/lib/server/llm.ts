@@ -93,7 +93,10 @@ function initialRejected(model: string): Set<string> {
   return new Set(KNOWN_REJECTED.find(([re]) => re.test(model))?.[1] ?? []);
 }
 
-function anthropicTools(req: ChatRequest, turns: unknown[], mustAnswer: boolean): Body {
+/** Models that reject tool_choice "any" (forcing a tool call); they are told to search in words instead. */
+const NO_FORCED_TOOLS = /^claude-(sonnet|opus)-[5-9]/;
+
+function anthropicTools(req: ChatRequest, turns: unknown[], mustAnswer: boolean, model: string): Body {
   const tools: unknown[] = [];
   if (req.webSearches) {
     tools.push({
@@ -105,7 +108,8 @@ function anthropicTools(req: ChatRequest, turns: unknown[], mustAnswer: boolean)
   }
   for (const t of req.localTools ?? []) tools.push({ name: t.name, description: t.description, input_schema: t.inputSchema });
   if (tools.length === 0) return {};
-  const choice = mustAnswer ? { type: "none" } : req.mustSearch && turns.length === 0 ? { type: "any" } : null;
+  const force = req.mustSearch && turns.length === 0 && !NO_FORCED_TOOLS.test(model);
+  const choice = mustAnswer ? { type: "none" } : force ? { type: "any" } : null;
   return { tools, ...(choice ? { tool_choice: choice } : {}) };
 }
 
@@ -150,7 +154,7 @@ function buildRequest(
           temperature: req.temperature,
           output_config: { effort: "low" },
           thinking: { type: "disabled" },
-          ...anthropicTools(req, turns, mustAnswer),
+          ...anthropicTools(req, turns, mustAnswer, cfg.model),
         },
       };
     case "openai":
@@ -277,14 +281,13 @@ export async function chat(cfg: LlmConfig, req: ChatRequest): Promise<string> {
     if (calls.length && round < rounds) {
       logUsage(cfg, data);
       turns.push({ role: "assistant", content: data.content });
-      turns.push({
-        role: "user",
-        content: calls.map((call) => {
-          const tool = tools.find((t) => t.name === call.name)!;
-          const input = call.input && typeof call.input === "object" ? (call.input as Record<string, unknown>) : {};
-          return { type: "tool_result", tool_use_id: call.id, content: tool.run(input) };
-        }),
+      const results: unknown[] = calls.map((call) => {
+        const tool = tools.find((t) => t.name === call.name)!;
+        const input = call.input && typeof call.input === "object" ? (call.input as Record<string, unknown>) : {};
+        return { type: "tool_result", tool_use_id: call.id, content: tool.run(input) };
       });
+      if (round + 1 >= rounds) results.push({ type: "text", text: "No more searches: give your final reply now, in the format asked for." });
+      turns.push({ role: "user", content: results });
       continue;
     }
     const text = extractText(cfg, data);
@@ -316,7 +319,7 @@ async function send(cfg: LlmConfig, req: ChatRequest, turns: unknown[], mustAnsw
         if (param && !rejected.has(param)) {
           rejected.add(param);
           rejectedParams.set(cacheKey, rejected);
-          console.warn(`[psst] ${label} (${cfg.model}) rejected "${param}", retrying without it`);
+          console.warn(`[psst] ${label} (${cfg.model}) rejected "${param}", retrying without it: ${err.message.slice(0, 300)}`);
           continue;
         }
       }

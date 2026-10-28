@@ -303,7 +303,8 @@ export class Engine {
   private fillerTimer: ReturnType<typeof setTimeout> | null = null;
   /** The filler being played; the opener waits for it so it is not cut off. */
   private filler: Promise<boolean> | null = null;
-  private fillerCount = 0;
+  /** Starts at a random place so each session does not open with the same filler. */
+  private fillerCount = Math.floor(Math.random() * 1000);
   /** Newest transcript line the current answer was based on. */
   private answerBasisId = 0;
   /** Answers the user has heard, sent along so the model moves on to new questions. */

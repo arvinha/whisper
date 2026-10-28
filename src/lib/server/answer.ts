@@ -77,11 +77,12 @@ const DEEP_STEP = `
 
 function liveStep(n: number): string {
   return `
-${n}. Decide "live". It is true when a correct answer needs something you cannot know from this message: current news, prices, rates, results, weather, opening hours, recent releases or events, the newest changes in the user's GitHub code, or what a website or link mentioned in the conversation says (for example "teknikfix.dk"). The app then looks it up on the internet and gives the real answer right after yours. Otherwise "live" is false.`;
+${n}. Decide "live". It is true when a correct answer needs something you cannot know from this message: current news, prices, rates, results, weather, opening hours, recent releases or events, the newest changes in the user's GitHub code, or what a website or link mentioned in the conversation says (for example "teknikfix.dk"). It is also true for specific facts the prepared material does not cover and that are not about the user's own life: the company, organization or people the user is meeting (what they do, their products, customers, news, numbers, plans, values), a named product, law, study or statistic. The app then looks it up on the internet and gives the real answer right after yours. General knowledge you are sure of (how a technology works, a well-known concept) does not need it. Otherwise "live" is false.`;
 }
 
 function openerRule(flags: string): string {
-  return `- When ${flags} is true, "answer" is ONLY an opener the user can start saying while the real answer is fetched: one natural sentence of at most ${OPENER_MAX_WORDS} words. It names the topic of this very question so it never sounds generic, and sounds engaged, but it states NO facts at all (no technologies, functions, files, numbers, prices, steps, results or what a line does), commits to nothing (no yes or no about plans, moving, skills or languages), never guesses, never asks the other person anything and does not try to answer. Examples: "Ja, inloggningen – där fick jag tänka till ordentligt." "Examensarbetet, ja – det lärde jag mig väldigt mycket av." "Flytt är en stor fråga, så låt mig svara ärligt."
+  return `- When ${flags} is true, "answer" is ONLY an opener the user can start saying while the real answer is fetched: one natural sentence of at most ${OPENER_MAX_WORDS} words. It names the topic of this very question so it never sounds generic, and sounds engaged, but it states NO facts at all (no technologies, functions, files, numbers, prices, steps, results or what a line does), commits to nothing (no yes or no about plans, moving, skills or languages), never guesses, never asks the other person anything and does not try to answer.
+- Openers must sound like a real person and vary every time. Never start with praise of the question ("Bra fråga", "Good question", "Godt spørgsmål", "Intressant fråga") or a stock word like "Absolut" or "Ja, det", and never start the way an earlier answer marked ${ANSWERED_TAG} started. Switch between ways in: name the topic and react ("Inloggningen – där fick jag tänka till ordentligt."), set the scene ("I examensarbetet stötte vi på precis det."), say why it matters to you ("Det är något jag brinner för, faktiskt."), think aloud ("Hur jag ser på ledarskap… låt mig ta ett konkret exempel."), or agree and lead on ("Ja, flytt har jag funderat mycket på.").
 - Otherwise: `;
 }
 
@@ -126,7 +127,8 @@ const LIVE_RULES = `- The message may contain things fetched from the internet j
 - If a lookup failed or does not contain what is asked, say briefly and honestly that you cannot see it right now, in the user's voice, and continue with what you do know. Never guess what a page or a commit says.
 - The user says your words to another person: never tell anyone to copy, paste, upload, open, send or check anything elsewhere, and never mention the app or how you get information. If something cannot be read, only say that you cannot open it right now.`;
 
-const WEB_SEARCH_RULE = `- You have a web search tool. Use it for anything current or beyond what you were given: news and headlines (also what is on a named site such as CNN right now), weather, prices, rates, results, opening hours, recent releases or events, a website that could not be read just now, and facts you are not sure of. Search precisely, for example "CNN top stories today" or "weather Aalborg today". For weather, use the place named in the conversation, otherwise the user's place from the profile or material, otherwise their approximate location. Never search for the user's own life or projects.
+const WEB_SEARCH_RULE = `- You have a web search tool. Use it for anything current or beyond what you were given: news and headlines (also what is on a named site such as CNN right now), weather, prices, rates, results, opening hours, recent releases or events, a website that could not be read just now, and facts you are not sure of. Search precisely, for example "CNN top stories today" or "weather Aalborg today". For weather, use the place named in the conversation, otherwise the user's place from the profile or material, otherwise their approximate location.
+- When a question asks for facts the prepared material does not contain and that are not about the user's own life (the company or organization the user is meeting, its products, customers, news, numbers or values, a named product, technology, law or event), search the web instead of answering vaguely or saying you do not know. For a company, search its own website first (its name plus what is asked, for example "Netcompany cases public sector"), then news. Never search for what the material already answers, and never for the user's own life, projects or code.
 - Asked to pick, summarize or comment on an article or news item: choose one concrete item from the results (when a connection to the user is asked for, one that really connects, such as technology, business, AI or education) and give its headline, what it is about and why it matters; when the profile or material allows, add how it connects to the user's own work, business or studies.
 - After searching, still reply with only the JSON below and say the facts naturally, without links, source names or citation marks unless they matter. Say every headline and quote in the answer language, translated, never in the original English. Give the answer itself and stop: never end with advice such as "kolla gärna en färsk prognos innan du går ut" or "läs gärna artikeln", and never say what you could not open when you found the answer.`;
 
@@ -231,6 +233,8 @@ function userPrompt(req: AnswerRequest, live = ""): string {
     const after = req.transcript.filter((l) => l.secondsAgo < lastAnswer);
     parts.push(`Earlier conversation, oldest first (context only):\n${formatTranscript(earlier, answered)}`);
     parts.push(`Said after your last answer, oldest first:\n${after.length > 0 ? formatTranscript(after) : "(nothing yet)"}`);
+    const starts = answered.map((a) => a.answer.split(/\s+/).slice(0, 4).join(" ")).filter(Boolean);
+    if (starts.length) parts.push(`Your earlier answers started with: ${starts.map((s) => `"${s}…"`).join(", ")}. Start this one differently.`);
   } else {
     parts.push(`Live transcript, oldest first:\n${formatTranscript(req.transcript)}`);
   }
@@ -304,12 +308,38 @@ function normalizeLang(value: unknown, fallback: string): string {
 }
 
 const SAFE_OPENERS: Record<string, string[]> = {
-  sv: ["Absolut, det kan jag berätta om.", "Ja, det tar jag gärna.", "Bra fråga, det svarar jag gärna på."],
-  da: ["Ja, det kan jeg godt fortælle om.", "Det fortæller jeg gerne om.", "Godt spørgsmål, det svarer jeg gerne på."],
-  en: ["Sure, I can tell you about that.", "Happy to go into that.", "Good question, glad you asked."],
+  sv: [
+    "Det kan jag gärna berätta om.",
+    "Det där har jag en del tankar kring.",
+    "Låt mig ta det från början.",
+    "Det är något jag har funderat en del på.",
+    "Där har jag faktiskt ett bra exempel.",
+    "Okej, låt mig förklara hur jag tänker.",
+  ],
+  da: [
+    "Det fortæller jeg gerne om.",
+    "Det har jeg en del tanker om.",
+    "Lad mig tage det fra begyndelsen.",
+    "Det er noget, jeg har tænkt en del over.",
+    "Der har jeg faktisk et godt eksempel.",
+    "Okay, lad mig forklare, hvordan jeg tænker.",
+  ],
+  en: [
+    "Happy to go into that.",
+    "I've got a few thoughts on that.",
+    "Let me take that from the start.",
+    "That's something I've thought about quite a bit.",
+    "I actually have a good example of that.",
+    "Okay, let me walk you through how I think about it.",
+  ],
 };
 /** The model often runs a little past the asked length; well past it, the opener has started answering. */
 const OPENER_HARD_MAX_WORDS = 24;
+
+function safeOpener(lang: string): string {
+  const options = SAFE_OPENERS[lang] ?? SAFE_OPENERS.en;
+  return options[Math.floor(Math.random() * options.length)];
+}
 
 /**
  * An opener that runs long has usually started answering, and its details are guesses the deep
@@ -320,8 +350,18 @@ function trimOpener(answer: string, lang: string): string {
   if (count(answer) <= OPENER_HARD_MAX_WORDS) return answer;
   const first = answer.match(/^.+?[.!?](?=\s|$)/)?.[0] ?? "";
   if (first && count(first) <= OPENER_HARD_MAX_WORDS) return first;
-  const options = SAFE_OPENERS[lang] ?? SAFE_OPENERS.en;
-  return options[answer.length % options.length];
+  return safeOpener(lang);
+}
+
+const PRAISE =
+  /^(?:(?:mm+|ja|okej|okay|oh|åh|nå)[,!.…]?\s+)?(?:en |a |et )?(?:riktigt |väldigt |really |very |rigtig |meget )?(?:bra|god|grym|intressant|spännande|rolig|good|great|interesting|excellent|fair|godt|interessant|spændende|fedt)\s+(?:fråga|question|spørgsmål)\b[\s,.!–—:-]*/iu;
+
+/** "Bra fråga, …" in front of every answer sounds canned; the rest of the sentence stands alone. */
+function dropPraise(answer: string, lang: string): string {
+  const rest = answer.replace(PRAISE, "");
+  if (rest === answer) return answer;
+  if (rest.split(/\s+/).filter(Boolean).length < 3) return safeOpener(lang);
+  return rest.charAt(0).toUpperCase() + rest.slice(1);
 }
 
 function mockAnswer(req: AnswerRequest): Omit<AnswerResult, "model" | "ms"> {
@@ -404,10 +444,20 @@ export async function generateAnswer(
 
   const isDeep = req.mode === "deep";
   const isDetail = req.mode === "detail" || isDeep;
-  const web = isDeep && !!req.live && cfg.provider === "anthropic";
+  // Every deep answer can search the web for facts beyond the material; "live" ones must.
+  const web = isDeep && cfg.provider === "anthropic";
   // The short answer must come at once; only the answers that follow it wait for the internet.
   const live = isDetail ? await liveLookups(req, signal) : "";
   const search = isDeep && cfg.provider === "anthropic" && req.library?.length ? materialSearchTool(req) : null;
+  // Nothing was fetched, so only a search can answer; otherwise the model sometimes just promises to look.
+  const mustSearch = web && !!req.live && !/just now\b[^\n]*:\n/.test(live);
+  const user = [
+    userPrompt(req, live),
+    web && country ? `The user's approximate location: country ${country}.` : "",
+    mustSearch ? "This question needs facts from the internet that nothing above contains: search the web before you answer." : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   const raw = await chat(cfg, {
     system: isDeep
       ? deepSystemPrompt(req.style, req.language, !!req.context, web, !!search)
@@ -415,7 +465,7 @@ export async function generateAnswer(
         ? detailSystemPrompt(req.style, req.language)
         : shortSystemPrompt(req.style, req.language, !!req.context),
     context: req.context ? contextBlock(req.context) : undefined,
-    user: web && country ? `${userPrompt(req, live)}\n\nThe user's approximate location: country ${country}.` : userPrompt(req, live),
+    user,
     // Generous because reasoning tokens (when a model insists on them) count towards the limit.
     maxTokens: isDetail ? 1200 : 800,
     temperature: 0.5,
@@ -424,8 +474,7 @@ export async function generateAnswer(
     // Each search adds about 20K tokens of results; two let it find a page and then look closer.
     webSearches: web ? 2 : undefined,
     webCountry: web ? country : undefined,
-    // Nothing was fetched, so only a search can answer; otherwise the model sometimes just promises to look.
-    mustSearch: web && !/just now\b[^\n]*:\n/.test(live),
+    mustSearch,
     localTools: search ? [search] : undefined,
     maxToolRounds: 3,
   });
@@ -467,6 +516,7 @@ export async function generateAnswer(
     needsLookup = false;
   }
   if (deep) answer = trimOpener(answer, lang);
+  if (!isDetail && answer) answer = dropPraise(answer, lang);
   if (req.language !== "auto" && (LANGUAGE_CODES as readonly string[]).includes(req.language)) {
     lang = req.language;
   }

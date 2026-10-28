@@ -617,7 +617,20 @@ export const sv = {
     nothingToRepeat: { voice: "Det finns inget svar att upprepa.", short: "Inget svar." },
     sample: "Hej! Jag är Aivia. Så här låter svaren i dina hörlurar.",
     /** Played the moment the user taps, while the real opener is still being written. */
-    fillers: ["Mm, bra fråga.", "Ja, alltså…", "Okej, låt mig tänka."],
+    fillers: [
+      "Ja, alltså…",
+      "Okej, låt mig tänka.",
+      "Hmm, ja…",
+      "Mm, låt mig se…",
+      "Okej, så…",
+      "Mm, bra fråga.",
+      "Ja, precis…",
+      "Hmm, intressant.",
+      "Ja, du…",
+      "Okej, ja.",
+      "Mm, det där…",
+      "Ja, alltså, hur ska jag säga…",
+    ],
   },
 };
 

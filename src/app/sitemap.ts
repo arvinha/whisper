@@ -16,5 +16,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
     })),
     { url: `${SITE_URL}/`, changeFrequency: "monthly" as const, priority: 0.5 },
     { url: `${SITE_URL}/integritet`, changeFrequency: "yearly" as const, priority: 0.2 },
+    { url: `${SITE_URL}/villkor`, changeFrequency: "yearly" as const, priority: 0.2 },
   ];
 }

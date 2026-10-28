@@ -78,20 +78,84 @@ const PROVIDER_LOOK: Record<AuthProvider, { name: string; logo: () => ReactNode;
   microsoft: { name: "Microsoft", logo: MicrosoftLogo, className: "border border-white/15 bg-white/5 text-white" },
 };
 
-type Step = "start" | "code" | "password" | "forgot" | "reset" | "family";
+type Step = "start" | "signup" | "signupCodes" | "password" | "forgot" | "reset" | "family";
+
+const SECONDARY = "w-full rounded-xl border border-white/15 bg-white/5 py-3 font-medium text-zinc-100 active:bg-white/10";
+
+function TermsCheck({ checked, onChange }: { checked: boolean; onChange: (checked: boolean) => void }) {
+  const t = useT();
+  const link = "text-violet-300 underline underline-offset-2";
+  return (
+    <label className="flex items-start gap-2.5 text-sm leading-relaxed text-zinc-300">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-1 size-4 shrink-0 accent-violet-500"
+      />
+      <span>
+        {t.account.termsBefore}
+        <a href={t.account.termsUrl} target="_blank" rel="noreferrer" className={link}>
+          {t.account.termsLink}
+        </a>
+        {t.account.termsMiddle}
+        <a href={t.account.privacyUrl} target="_blank" rel="noreferrer" className={link}>
+          {t.account.privacyLink}
+        </a>
+        .
+      </span>
+    </label>
+  );
+}
+
+function CodeInput({
+  value,
+  onChange,
+  label,
+  autoFocus = false,
+  fromSms = false,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  label?: string;
+  autoFocus?: boolean;
+  fromSms?: boolean;
+}) {
+  return (
+    <label className="block space-y-1.5">
+      {label && <span className="text-sm text-zinc-400">{label}</span>}
+      <input
+        inputMode="numeric"
+        autoComplete={fromSms ? "one-time-code" : "off"}
+        autoFocus={autoFocus}
+        maxLength={6}
+        value={value}
+        onChange={(e) => onChange(e.target.value.replace(/\D/g, "").slice(0, 6))}
+        placeholder="123456"
+        className={`${input} text-center text-2xl tracking-[0.4em]`}
+      />
+    </label>
+  );
+}
 
 /**
- * Sign up or log in: Apple/Google/Microsoft, a code by e-mail, a password, or a family code.
- * A first sign-in creates the account.
+ * Sign up or log in: Apple/Google/Microsoft, a new account (e-mail, mobile number, password,
+ * terms; checked with one code by e-mail and one by text), a password, or a family code.
  */
 export function AuthForm({ config, onDone }: { config: PublicConfig; onDone?: () => void }) {
   const t = useT();
   const engine = getEngine();
-  const { mail, providers, enabled } = config.accounts;
-  const [step, setStep] = useState<Step>(enabled && (mail || providers.length > 0) ? "start" : enabled ? "password" : "family");
+  const { mail, sms, providers, enabled } = config.accounts;
+  const canSignUp = enabled && mail && sms;
+  const [step, setStep] = useState<Step>(enabled && (canSignUp || providers.length > 0) ? "start" : enabled ? "password" : "family");
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
+  const [phone, setPhone] = useState("");
+  const [sentPhone, setSentPhone] = useState("");
   const [password, setPassword] = useState("");
+  const [terms, setTerms] = useState(false);
+  const [code, setCode] = useState("");
+  const [smsCode, setSmsCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -101,7 +165,7 @@ export function AuthForm({ config, onDone }: { config: PublicConfig; onDone?: ()
     setError(null);
     setInfo(null);
     setCode("");
-    setPassword("");
+    setSmsCode("");
   };
 
   const run = async (action: () => Promise<boolean | void>) => {
@@ -119,13 +183,27 @@ export function AuthForm({ config, onDone }: { config: PublicConfig; onDone?: ()
     }
   };
 
-  const sendCode = (purpose: "login" | "reset", next: Step) => (e?: FormEvent) => {
+  const sendResetCode = (e?: FormEvent) => {
     e?.preventDefault();
     if (!EMAIL_RE.test(email.trim())) return setError(t.account.badEmail);
     void run(async () => {
-      await engine.requestCode(email.trim(), purpose);
-      if (step === next) setInfo(t.account.resent);
-      else go(next);
+      await engine.requestResetCode(email.trim());
+      if (step === "reset") setInfo(t.account.resent);
+      else go("reset");
+    });
+  };
+
+  const submitSignup = (e?: FormEvent) => {
+    e?.preventDefault();
+    if (!name.trim()) return setError(t.account.badName);
+    if (!EMAIL_RE.test(email.trim())) return setError(t.account.badEmail);
+    if (!phone.trim()) return setError(t.account.badPhone);
+    if (password.length < 8) return setError(t.account.shortPassword);
+    if (!terms) return setError(t.account.needTerms);
+    void run(async () => {
+      setSentPhone(await engine.signUp({ name: name.trim(), email: email.trim(), phone, password, terms }));
+      if (step === "signupCodes") setInfo(t.account.resent);
+      else go("signupCodes");
     });
   };
 
@@ -140,19 +218,6 @@ export function AuthForm({ config, onDone }: { config: PublicConfig; onDone?: ()
       onChange={(e) => setEmail(e.target.value)}
       placeholder={t.account.email}
       className={input}
-    />
-  );
-
-  const codeInput = (
-    <input
-      inputMode="numeric"
-      autoComplete="one-time-code"
-      autoFocus
-      maxLength={6}
-      value={code}
-      onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-      placeholder="123456"
-      className={`${input} text-center text-2xl tracking-[0.4em]`}
     />
   );
 
@@ -176,27 +241,78 @@ export function AuthForm({ config, onDone }: { config: PublicConfig; onDone?: ()
     );
   }
 
-  if (step === "code") {
+  if (step === "signup") {
+    return (
+      <form onSubmit={submitSignup} className="space-y-3">
+        <p className="font-medium text-zinc-100">{t.account.signupTitle}</p>
+        <input
+          autoComplete="given-name"
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={t.account.name}
+          className={input}
+        />
+        {emailInput()}
+        <div className="space-y-1.5">
+          <input
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder={t.account.phone}
+            className={input}
+          />
+          <p className="text-xs leading-relaxed text-zinc-500">{t.account.phoneHint}</p>
+        </div>
+        <input
+          type="password"
+          autoComplete="new-password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder={`${t.account.password} (${t.account.passwordHint.toLowerCase()})`}
+          className={input}
+        />
+        <TermsCheck checked={terms} onChange={setTerms} />
+        {message}
+        <button type="submit" disabled={busy} className={PRIMARY}>
+          {busy ? "…" : t.account.createAccount}
+        </button>
+        <div className="flex justify-between">
+          <button type="button" onClick={() => go("start")} className={LINK}>
+            {t.account.back}
+          </button>
+          <button type="button" onClick={() => go("password")} className={LINK}>
+            {t.account.passwordLogin}
+          </button>
+        </div>
+      </form>
+    );
+  }
+
+  if (step === "signupCodes") {
     return (
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          void run(() => engine.signInWithCode(email.trim(), code));
+          void run(() => engine.finishSignUp(email.trim(), code, smsCode));
         }}
         className="space-y-3"
       >
-        <p className="text-sm leading-relaxed text-zinc-300">{t.account.codeSent(email.trim())}</p>
-        {codeInput}
+        <p className="text-sm leading-relaxed text-zinc-300">{t.account.codesSent(email.trim(), sentPhone)}</p>
+        <CodeInput value={code} onChange={setCode} label={t.account.mailCode} autoFocus />
+        <CodeInput value={smsCode} onChange={setSmsCode} label={t.account.smsCode} fromSms />
         {message}
-        <button type="submit" disabled={busy || code.length !== 6} className={PRIMARY}>
-          {busy ? "…" : t.account.verify}
+        <button type="submit" disabled={busy || code.length !== 6 || smsCode.length !== 6} className={PRIMARY}>
+          {busy ? "…" : t.account.createAccount}
         </button>
         <div className="flex justify-between">
-          <button type="button" onClick={() => go("start")} className={LINK}>
-            {t.account.changeEmail}
+          <button type="button" onClick={() => go("signup")} className={LINK}>
+            {t.account.changeDetails}
           </button>
-          <button type="button" disabled={busy} onClick={() => sendCode("login", "code")()} className={LINK}>
-            {t.account.resend}
+          <button type="button" disabled={busy} onClick={() => submitSignup()} className={LINK}>
+            {t.account.resendCodes}
           </button>
         </div>
         <p className="text-xs leading-relaxed text-zinc-500">{t.account.checkSpam}</p>
@@ -229,7 +345,7 @@ export function AuthForm({ config, onDone }: { config: PublicConfig; onDone?: ()
           {busy ? "…" : t.account.login}
         </button>
         <div className="flex justify-between">
-          {mail || providers.length > 0 ? (
+          {canSignUp || providers.length > 0 ? (
             <button type="button" onClick={() => go("start")} className={LINK}>
               {t.account.back}
             </button>
@@ -244,13 +360,18 @@ export function AuthForm({ config, onDone }: { config: PublicConfig; onDone?: ()
             </button>
           )}
         </div>
+        {canSignUp && (
+          <button type="button" onClick={() => go("signup")} className={LINK}>
+            {t.account.noAccount}
+          </button>
+        )}
       </form>
     );
   }
 
   if (step === "forgot") {
     return (
-      <form onSubmit={sendCode("reset", "reset")} className="space-y-3">
+      <form onSubmit={sendResetCode} className="space-y-3">
         <p className="font-medium text-zinc-100">{t.account.forgotTitle}</p>
         <p className="text-sm leading-relaxed text-zinc-400">{t.account.forgotText}</p>
         {emailInput(true)}
@@ -271,12 +392,12 @@ export function AuthForm({ config, onDone }: { config: PublicConfig; onDone?: ()
         onSubmit={(e) => {
           e.preventDefault();
           if (password.length < 8) return setError(t.account.shortPassword);
-          void run(() => engine.signInWithCode(email.trim(), code, { password }));
+          void run(() => engine.resetPassword(email.trim(), code, password));
         }}
         className="space-y-3"
       >
         <p className="text-sm leading-relaxed text-zinc-300">{t.account.codeSent(email.trim())}</p>
-        {codeInput}
+        <CodeInput value={code} onChange={setCode} autoFocus />
         <input
           type="password"
           autoComplete="new-password"
@@ -293,7 +414,7 @@ export function AuthForm({ config, onDone }: { config: PublicConfig; onDone?: ()
           <button type="button" onClick={() => go("password")} className={LINK}>
             {t.account.back}
           </button>
-          <button type="button" disabled={busy} onClick={() => sendCode("reset", "reset")()} className={LINK}>
+          <button type="button" disabled={busy} onClick={() => sendResetCode()} className={LINK}>
             {t.account.resend}
           </button>
         </div>
@@ -316,27 +437,21 @@ export function AuthForm({ config, onDone }: { config: PublicConfig; onDone?: ()
           </button>
         );
       })}
-      {mail && (
-        <>
-          {providers.length > 0 && (
-            <div className="flex items-center gap-3 py-1 text-xs text-zinc-500">
-              <span className="h-px flex-1 bg-white/10" /> {t.account.or} <span className="h-px flex-1 bg-white/10" />
-            </div>
-          )}
-          <form onSubmit={sendCode("login", "code")} className="space-y-3">
-            {emailInput()}
-            {message}
-            <button type="submit" disabled={busy || !email.trim()} className={PRIMARY}>
-              {busy ? "…" : t.account.continueEmail}
-            </button>
-          </form>
-        </>
+      {providers.length > 0 && (
+        <div className="flex items-center gap-3 py-1 text-xs text-zinc-500">
+          <span className="h-px flex-1 bg-white/10" /> {t.account.or} <span className="h-px flex-1 bg-white/10" />
+        </div>
       )}
-      {!mail && message}
-      <div className="flex justify-between pt-1">
-        <button type="button" onClick={() => go("password")} className={LINK}>
-          {t.account.passwordLogin}
+      {canSignUp && (
+        <button type="button" onClick={() => go("signup")} className={PRIMARY}>
+          {t.account.signupCta}
         </button>
+      )}
+      <button type="button" onClick={() => go("password")} className={SECONDARY}>
+        {t.account.passwordLogin}
+      </button>
+      {message}
+      <div className="flex justify-end pt-1">
         <button type="button" onClick={() => go("family")} className={LINK}>
           {t.account.haveCode}
         </button>
@@ -345,10 +460,8 @@ export function AuthForm({ config, onDone }: { config: PublicConfig; onDone?: ()
   );
 }
 
-/** The first screen when nobody is signed in. */
-export function AuthScreen({ config }: { config: PublicConfig }) {
-  const t = useT();
-  const accounts = config.accounts.enabled;
+/** Logo and frame shared by the sign-in screen and the "one last step" screen. */
+function AuthShell({ intro, children, footer }: { intro: ReactNode; children: ReactNode; footer: ReactNode }) {
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col px-6 pt-safe pb-8">
       <div className="flex flex-1 flex-col justify-center py-8">
@@ -364,18 +477,181 @@ export function AuthScreen({ config }: { config: PublicConfig }) {
           <h1 className="text-3xl font-semibold tracking-tight">
             whis<span className="text-violet-300">per</span>
           </h1>
+          {intro}
+        </div>
+        {children}
+      </div>
+      {footer}
+    </main>
+  );
+}
+
+function LegalLinks() {
+  const t = useT();
+  return (
+    <p className="text-center text-xs leading-relaxed text-zinc-600">
+      {t.account.agree}{" "}
+      <a href={t.account.termsUrl} className="underline underline-offset-2 hover:text-zinc-400">
+        {t.account.termsName}
+      </a>
+      {" · "}
+      <a href={t.account.privacyUrl} className="underline underline-offset-2 hover:text-zinc-400">
+        {t.account.privacyName}
+      </a>
+    </p>
+  );
+}
+
+/** The first screen when nobody is signed in. */
+export function AuthScreen({ config }: { config: PublicConfig }) {
+  const t = useT();
+  const accounts = config.accounts.enabled;
+  return (
+    <AuthShell
+      intro={
+        <>
           <p className="mt-2 text-balance text-zinc-400">{t.account.welcomeText}</p>
           {accounts && <p className="mt-3 text-sm font-medium text-emerald-300">{t.account.noCard}</p>}
-        </div>
-        <AuthForm config={config} />
-      </div>
-      <p className="mb-3 text-center text-sm">
-        <a href={t.account.learnMoreUrl} className="text-violet-300 underline-offset-4 hover:underline">
-          {t.account.learnMore}
-        </a>
-      </p>
-      {accounts && <p className="text-center text-xs leading-relaxed text-zinc-600">{t.account.agree}</p>}
-    </main>
+        </>
+      }
+      footer={
+        <>
+          <p className="mb-3 text-center text-sm">
+            <a href={t.account.learnMoreUrl} className="text-violet-300 underline-offset-4 hover:underline">
+              {t.account.learnMore}
+            </a>
+          </p>
+          {accounts && <LegalLinks />}
+        </>
+      }
+    >
+      <AuthForm config={config} />
+    </AuthShell>
+  );
+}
+
+/**
+ * Shown to a signed-in account that lacks a checked mobile number, today's terms or a way to log
+ * in (made before these rules, or with Google/Apple/Microsoft). Nothing else works until it is done.
+ */
+export function SetupScreen({ account }: { account: AccountInfo }) {
+  const t = useT();
+  const engine = getEngine();
+  const [phone, setPhone] = useState(account.phone);
+  const [sentTo, setSentTo] = useState("");
+  const [smsCode, setSmsCode] = useState("");
+  const [password, setPassword] = useState("");
+  const [terms, setTerms] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+
+  const phoneChecked = !!account.phone && phone === account.phone;
+  const termsOnly = phoneChecked && !account.needsPassword;
+  const ready =
+    (phoneChecked || (sentTo !== "" && smsCode.length === 6)) && terms && (!account.needsPassword || password.length >= 8);
+
+  const run = async (action: () => Promise<void>) => {
+    setBusy(true);
+    setError(null);
+    setInfo(null);
+    try {
+      await action();
+    } catch (err) {
+      setError(errorText(err, t));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendCode = () => {
+    if (!phone.trim()) return setError(t.account.badPhone);
+    void run(async () => {
+      const number = await engine.sendPhoneCode(phone);
+      setSentTo(number);
+      setInfo(t.account.smsSent(number));
+    });
+  };
+
+  const finish = (e: FormEvent) => {
+    e.preventDefault();
+    if (!terms) return setError(t.account.needTerms);
+    if (account.needsPassword && password.length < 8) return setError(t.account.shortPassword);
+    void run(() =>
+      engine.completeAccount({
+        phone: phoneChecked ? account.phone : sentTo,
+        smsCode,
+        terms,
+        password: account.needsPassword ? password : undefined,
+      }),
+    );
+  };
+
+  return (
+    <AuthShell
+      intro={
+        <>
+          <p className="mt-4 text-lg font-medium text-zinc-100">{t.account.setupTitle}</p>
+          <p className="mt-2 text-balance text-sm leading-relaxed text-zinc-400">
+            {termsOnly ? t.account.setupTermsOnly : t.account.setupText}
+          </p>
+        </>
+      }
+      footer={
+        <p className="text-center text-sm">
+          <button type="button" onClick={() => engine.logout()} className={LINK}>
+            {t.account.logout} ({account.email})
+          </button>
+        </p>
+      }
+    >
+      <form onSubmit={finish} className="space-y-3">
+        {!termsOnly && (
+          <>
+            <input
+              type="tel"
+              inputMode="tel"
+              autoComplete="tel"
+              value={phone}
+              onChange={(e) => {
+                setPhone(e.target.value);
+                setSentTo("");
+                setSmsCode("");
+              }}
+              placeholder={t.account.phone}
+              className={input}
+            />
+            {!phoneChecked && (
+              <button
+                type="button"
+                disabled={busy || !phone.trim()}
+                onClick={sendCode}
+                className="w-full rounded-xl border border-violet-400/40 bg-violet-500/15 py-3 font-medium text-violet-100 disabled:opacity-40"
+              >
+                {sentTo ? t.account.resend : t.account.sendSmsCode}
+              </button>
+            )}
+            {sentTo && !phoneChecked && <CodeInput value={smsCode} onChange={setSmsCode} label={t.account.smsCode} autoFocus fromSms />}
+            {account.needsPassword && (
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={t.account.choosePassword}
+                className={input}
+              />
+            )}
+          </>
+        )}
+        <TermsCheck checked={terms} onChange={setTerms} />
+        {error && <p className="text-sm text-rose-400">{error}</p>}
+        {info && <p className="text-sm text-emerald-300">{info}</p>}
+        <button type="submit" disabled={busy || !ready} className={PRIMARY}>
+          {busy ? "…" : t.account.finish}
+        </button>
+      </form>
+    </AuthShell>
   );
 }
 
@@ -398,6 +674,7 @@ export function trialMinutesLeft(account: AccountInfo): number {
 
 function statusLine(a: AccountInfo, currency: Currency, t: Dict): string {
   if (!a.active) {
+    if (a.reason === "setup") return t.account.setupNeeded;
     if (a.reason === "empty") return t.account.empty;
     return a.trialDenied ? t.account.trialDenied : t.account.trialOver;
   }
@@ -414,6 +691,7 @@ export function AccountPanel({ config, account }: { config: PublicConfig; accoun
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [upgrading, setUpgrading] = useState(false);
+  const [startNow, setStartNow] = useState(false);
   const currency = accountCurrency(account, lang);
   // No prices while the free minutes last unless the user asks for them; they appear when they are over.
   const inTrial = account.plan === "trial" && account.active;
@@ -474,6 +752,15 @@ export function AccountPanel({ config, account }: { config: PublicConfig; accoun
               {t.account.packsNote}
               {inTrial && ` ${t.account.upgradeNote}`}
             </p>
+            <label className="flex items-start gap-2.5 py-1 text-xs leading-relaxed text-zinc-300">
+              <input
+                type="checkbox"
+                checked={startNow}
+                onChange={(e) => setStartNow(e.target.checked)}
+                className="mt-0.5 size-4 shrink-0 accent-violet-500"
+              />
+              <span>{t.account.startNow}</span>
+            </label>
             {TOPUP_KINDS.map((kind) => (
               <div
                 key={kind}
@@ -494,7 +781,7 @@ export function AccountPanel({ config, account }: { config: PublicConfig; accoun
                 </div>
                 <button
                   type="button"
-                  disabled={busy !== null}
+                  disabled={busy !== null || !startNow}
                   onClick={() => void go(kind, () => getEngine().openCheckout(kind))}
                   className="shrink-0 rounded-lg bg-violet-500 px-3.5 py-2 font-medium text-white disabled:opacity-40"
                 >

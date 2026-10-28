@@ -46,7 +46,7 @@ export interface PublicConfig {
    * Sign-up is possible; billing means paid plans can be bought; mail means e-mail codes work;
    * providers are the "Continue with …" buttons that are set up.
    */
-  accounts: { enabled: boolean; billing: boolean; mail: boolean; providers: AuthProvider[]; supportEmail: string };
+  accounts: { enabled: boolean; billing: boolean; mail: boolean; sms: boolean; providers: AuthProvider[]; supportEmail: string };
   /** The signed-in account, when the request carried an account session. */
   account: AccountInfo | null;
   /** iCloud link to the "Whisper påminnelse" shortcut that adds to Apple's Reminders app, or "". */
@@ -56,8 +56,8 @@ export interface PublicConfig {
 export type AuthProvider = "google" | "apple" | "microsoft" | "facebook";
 /** "trial": free minutes left; "prepaid": paying from a bought balance. */
 export type Plan = "trial" | "prepaid";
-/** "empty": the bought balance is used up. */
-export type AccountReason = "" | "trial_over" | "empty";
+/** "empty": the bought balance is used up. "setup": a phone number, the terms or a password are missing. */
+export type AccountReason = "" | "trial_over" | "empty" | "setup";
 /** Top-ups of the balance, see TOPUPS in shared/pricing.ts. */
 export type CheckoutKind = "kr50" | "kr100" | "kr250";
 
@@ -78,6 +78,10 @@ export interface AccountInfo {
   trialDenied: boolean;
   /** Has a Stripe customer, so receipts can be shown. */
   hasBilling: boolean;
+  /** The checked mobile number, or "" before one is added. */
+  phone: string;
+  /** No password and no Google/Apple/Microsoft, so finishing the account must set one. */
+  needsPassword: boolean;
 }
 
 export interface AuthResult {

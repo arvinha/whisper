@@ -5,7 +5,7 @@ import { takeDueReminders, type AgendaItem } from "@/lib/client/agenda";
 import { startDigester } from "@/lib/client/digester";
 import { getEngine, type InputMode } from "@/lib/client/engine";
 import { FEATURES } from "@/lib/shared/features";
-import { AuthScreen } from "./Account";
+import { AuthScreen, SetupScreen } from "./Account";
 import { useT, useUiLang } from "@/lib/client/i18n";
 import { CalendarPage, whenLabel } from "./CalendarPage";
 import { HistorySheet } from "./HistorySheet";
@@ -159,6 +159,15 @@ export function PsstApp() {
     return (
       <>
         <AuthScreen config={state.config} />
+        <NoticeBar notice={state.notice} onDismiss={() => engine.dismissNotice()} />
+      </>
+    );
+  }
+
+  if (state.config?.account?.reason === "setup" && !live) {
+    return (
+      <>
+        <SetupScreen account={state.config.account} />
         <NoticeBar notice={state.notice} onDismiss={() => engine.dismissNotice()} />
       </>
     );

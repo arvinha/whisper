@@ -2,6 +2,7 @@ import type { LlmProvider, PublicConfig, SttProvider, TtsProvider } from "@/lib/
 import { accountInfo, accountsEnabled, billingEnabled, supportEmail, type Account } from "./accounts";
 import { mailEnabled } from "./mail";
 import { enabledProviders } from "./oauth";
+import { smsEnabled } from "./sms";
 
 type RealProvider = "openai" | "anthropic" | "groq" | "deepseek";
 type RealStt = Exclude<SttProvider, "mock">;
@@ -336,6 +337,7 @@ export function toPublicConfig(
       enabled: accountsEnabled(),
       billing: billingEnabled(),
       mail: accountsEnabled() && mailEnabled(),
+      sms: accountsEnabled() && smsEnabled(),
       providers: enabledProviders(),
       supportEmail: supportEmail(),
     },

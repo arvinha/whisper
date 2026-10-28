@@ -147,11 +147,12 @@ Appen kan köras på samma dator som teknikfix.dk, via samma Cloudflare-tunnel. 
 
 När `SESSION_SECRET` är satt (bara på egen dator, inte på Vercel) kan vem som helst skapa ett konto. Kontona sparas i `data\accounts.json` (lösenorden krypterade). Ta en kopia av filen då och då.
 
-Sätt att logga in (den som loggar in första gången får ett konto):
+Skapa konto och logga in:
 
-- **E-postkod:** kunden skriver sin e-post och får en kod med 6 siffror (gäller 15 min). Kräver `RESEND_API_KEY` och `MAIL_FROM` (samma Resend-konto och domän som teknikfix.dk).
-- **Lösenord:** för den som har satt ett. **Glömt lösenordet?** mejlar en kod, och kunden väljer ett nytt lösenord själv.
+- **Skapa konto:** förnamn, e-post, mobilnummer, lösenord (minst 8 tecken) och en ruta för att godkänna villkoren (`/villkor`). Kunden får en kod på mejlen och en kod via SMS, och kontot skapas först när båda stämmer. Kräver `RESEND_API_KEY` + `MAIL_FROM` och `ELKS_API_USERNAME` + `ELKS_API_PASSWORD` (46elks.com).
+- **Logga in:** e-post och lösenord. **Glömt lösenordet?** mejlar en kod, och kunden väljer ett nytt lösenord själv.
 - **Google / Apple / Facebook / Microsoft:** knapparna syns när nycklarna finns i `.env.local` (se `.env.example`). Omdirigeringsadressen är `https://whisper.teknikfix.dk/api/auth/<google|apple|facebook|microsoft>/callback`. Integritetspolicyn som Google, Apple och Facebook frågar efter ligger på `https://whisper.teknikfix.dk/integritet`.
+- **Ett sista steg:** ett konto utan bekräftat mobilnummer (Google m.fl., och konton från före den 28 oktober 2026), utan godkända villkor eller utan lösenord kan inte användas förrän kunden har lagt till det. Ändras `TERMS_VERSION` i `src/lib/shared/terms.ts` måste alla godkänna villkoren igen.
 - **Familjekoder** (`APP_USERS`) fungerar som förut under "Jag har en kod".
 
 Kunden betalar för det den använder, från ett saldo som fylls på som ett kontantkort (priser i `src/lib/shared/pricing.ts`, inkl. moms):
@@ -165,7 +166,7 @@ Kunden betalar för det den använder, från ett saldo som fylls på som ett kon
 
 Saldot sparas i svenska öre och visas i DKK för den som betalat i DKK. Minuterna räknas på ljudet som skickas till taligenkänningen, så tystnad kostar inget. Svaret dras när appen visar ett svar efter ett tryck, inte för förberedda svar i bakgrunden. Familjekoderna (`APP_USERS`) och `APP_PASSWORD` har ingen gräns.
 
-Gratisminuterna kräver inget kort, och inga priser visas förrän de är slut. Alla konton tillsammans får högst `TRIAL_DAILY_HOURS` (10) gratistimmar per dygn. Samma person får inte nya gratisminuter genom att göra nya konton: de kopplas till e-postadressen (utan `+tillägg`, och för Gmail utan punkter), till telefonen (ett slumpat id i appen) och högst 3 nya per nätverk och vecka. Tillfälliga engångsadresser (mailinator m.fl.) stoppas. Ett konto som inte får gratisminuter kan ändå fylla på direkt.
+Gratisminuterna kräver inget kort, och inga priser visas förrän de är slut. Alla konton tillsammans får högst `TRIAL_DAILY_HOURS` (10) gratistimmar per dygn. Samma person får inte nya gratisminuter genom att göra nya konton: de kopplas till e-postadressen (utan `+tillägg`, och för Gmail utan punkter), till mobilnumret (bekräftat med SMS, ett nummer per konto, fasta nummer och internetnummer nekas), till telefonen (ett slumpat id i appen) och högst 3 nya per nätverk och vecka. Spåren finns kvar ett år även om kontot raderas. Tillfälliga engångsadresser (mailinator m.fl.) stoppas. SMS skickas bara till `SMS_COUNTRIES` (SE, DK, NO, FI), högst 3 per nummer och timme och `SMS_DAILY_MAX` (300) per dygn, så ingen kan köra upp SMS-räkningen. Fem fel koder gör koden ogiltig. Ett konto som inte får gratisminuter kan ändå fylla på direkt. Vid påfyllning måste kunden kryssa i att saldot får börja användas direkt (ångerrätten, se `/villkor` punkt 5).
 
 Så slår du på betalningen:
 

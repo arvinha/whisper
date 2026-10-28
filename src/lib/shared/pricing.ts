@@ -7,6 +7,8 @@ import type { CheckoutKind } from "./types";
 export const LISTEN_ORE_PER_MINUTE = 10;
 export const ANSWER_ORE = 50;
 export const TRIAL_MINUTES = 20;
+/** Answers are free in the trial, up to this many, so one trial has a known worst-case cost. */
+export const TRIAL_MAX_ANSWERS = 40;
 export const DKK_PER_SEK = 0.7;
 
 /** Top-ups: `sek` is both the SEK price and the credit; `dkk` is the DKK price for the same credit. */

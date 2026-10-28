@@ -405,14 +405,36 @@ export class Engine {
     return this.submitPassword(token);
   }
 
-  async requestCode(email: string, purpose: "login" | "reset"): Promise<void> {
-    await this.api.requestCode(email, purpose, uiLang());
+  async requestResetCode(email: string): Promise<void> {
+    await this.api.requestResetCode(email, uiLang());
   }
 
-  /** Signs in (or up) with the e-mailed code; a password, if given, becomes the new one. */
-  async signInWithCode(email: string, code: string, extra: { name?: string; password?: string } = {}): Promise<boolean> {
-    const { token } = await this.api.verifyCode({ email, code, ...extra, device: deviceId() });
+  /** Sets a new password with the e-mailed code, and signs in. */
+  async resetPassword(email: string, code: string, password: string): Promise<boolean> {
+    const { token } = await this.api.resetPassword({ email, code, password });
     return this.submitPassword(token);
+  }
+
+  /** Sign-up, first step: a code goes to the e-mail and one to the phone. Returns the number as saved. */
+  async signUp(form: { name: string; email: string; phone: string; password: string; terms: boolean }): Promise<string> {
+    const { phone } = await this.api.signup({ ...form, lang: uiLang() });
+    return phone;
+  }
+
+  async finishSignUp(email: string, emailCode: string, smsCode: string): Promise<boolean> {
+    const { token } = await this.api.finishSignup({ email, emailCode, smsCode, device: deviceId() });
+    return this.submitPassword(token);
+  }
+
+  async sendPhoneCode(phone: string): Promise<string> {
+    return (await this.api.phoneCode(phone, uiLang())).phone;
+  }
+
+  /** Adds the phone number, the terms and, if needed, a password to the signed-in account. */
+  async completeAccount(form: { phone: string; smsCode: string; terms: boolean; password?: string }): Promise<void> {
+    const { account } = await this.api.completeAccount({ ...form, lang: uiLang(), device: deviceId() });
+    const config = this.state.config;
+    if (config) this.set({ config: { ...config, account } });
   }
 
   /** Google/Apple/Microsoft: leaves the app and comes back with `#login=` in the address. */

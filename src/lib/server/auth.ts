@@ -68,6 +68,7 @@ export async function requireAccess(req: Request, config: ServerConfig): Promise
   const caller = await requireAuth(req, config);
   if (caller.account) {
     const access = accessOf(caller.account);
+    if (access.reason === "setup") throw setupError();
     if (!access.active) {
       throw new AppError(402, "plan_required", "Fyll på saldot för att fortsätta använda Whisper.");
     }
@@ -78,8 +79,19 @@ export async function requireAccess(req: Request, config: ServerConfig): Promise
   return caller;
 }
 
+function setupError(): AppError {
+  return new AppError(402, "plan_required", "Slutför ditt konto först: lägg till ditt mobilnummer och godkänn villkoren.");
+}
+
 export async function requireAccount(req: Request, config: ServerConfig): Promise<Account> {
   const caller = await requireAuth(req, config);
   if (!caller.account) throw new AppError(400, "bad_request", "Logga in med ett konto först.");
   return caller.account;
+}
+
+/** Like requireAccount, but the account must be finished (phone, terms, a way to log in). */
+export async function requireFinishedAccount(req: Request, config: ServerConfig): Promise<Account> {
+  const account = await requireAccount(req, config);
+  if (accessOf(account).reason === "setup") throw setupError();
+  return account;
 }

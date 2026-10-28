@@ -231,22 +231,47 @@ export class Api {
     });
   }
 
-  /** E-mails a six-digit code (sign up, log in, or a forgotten password). */
-  async requestCode(email: string, purpose: "login" | "reset", lang: string): Promise<void> {
-    await this.postJson<{ ok: true }>("/api/account/code", { email, purpose, lang }, "");
+  /** E-mails a six-digit code for a forgotten password. */
+  async requestResetCode(email: string, lang: string): Promise<void> {
+    await this.postJson<{ ok: true }>("/api/account/code", { email, lang }, "");
   }
 
-  async verifyCode(req: { email: string; code: string; name?: string; password?: string; device: string }): Promise<AuthResult> {
+  async resetPassword(req: { email: string; code: string; password: string }): Promise<AuthResult> {
     return this.postJson<AuthResult>("/api/account/verify", req, "");
+  }
+
+  /** Sign-up, first step: sends one code by e-mail and one by text. Returns the number as it will be saved. */
+  async signup(req: { name: string; email: string; phone: string; password: string; terms: boolean; lang: string }): Promise<{ phone: string }> {
+    return this.postJson<{ phone: string }>("/api/account/signup", req, "");
+  }
+
+  async finishSignup(req: { email: string; emailCode: string; smsCode: string; device: string }): Promise<AuthResult> {
+    return this.postJson<AuthResult>("/api/account/signup/verify", req, "");
+  }
+
+  /** Texts a code to the number the signed-in account wants to add. */
+  async phoneCode(phone: string, lang: string): Promise<{ phone: string }> {
+    return this.postJson<{ phone: string }>("/api/account/phone", { phone, lang }, this.getPassword());
+  }
+
+  async completeAccount(req: {
+    phone: string;
+    smsCode: string;
+    terms: boolean;
+    password?: string;
+    lang: string;
+    device: string;
+  }): Promise<{ account: AccountInfo }> {
+    return this.postJson<{ account: AccountInfo }>("/api/account/complete", req, this.getPassword());
   }
 
   async login(email: string, password: string): Promise<AuthResult> {
     return this.postJson<AuthResult>("/api/account/login", { email, password }, "");
   }
 
-  /** A Stripe page to pay on. */
+  /** A Stripe page to pay on. startNow: the buyer asked for the balance to be usable at once. */
   async checkout(kind: CheckoutKind): Promise<{ url: string }> {
-    return this.postJson<{ url: string }>("/api/account/checkout", { kind }, this.getPassword());
+    return this.postJson<{ url: string }>("/api/account/checkout", { kind, startNow: true }, this.getPassword());
   }
 
   /** Stripe's page with receipts for earlier top-ups. */

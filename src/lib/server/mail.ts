@@ -1,3 +1,4 @@
+import { promises as fs } from "node:fs";
 import { AppError } from "./errors";
 
 type Lang = "sv" | "da" | "en";
@@ -6,9 +7,14 @@ function env(name: string): string {
   return (process.env[name] ?? "").trim();
 }
 
+/** Writes mails to a file instead of sending them; only outside production, for tests. */
+function fakeFile(): string {
+  return process.env.NODE_ENV === "production" ? "" : env("MAIL_FAKE_FILE");
+}
+
 /** E-mail goes through Resend (resend.com) from a verified domain. */
 export function mailEnabled(): boolean {
-  return env("RESEND_API_KEY").startsWith("re_") && env("MAIL_FROM").includes("@");
+  return (env("RESEND_API_KEY").startsWith("re_") && env("MAIL_FROM").includes("@")) || !!fakeFile();
 }
 
 export function mailLang(value: unknown): Lang {
@@ -40,6 +46,11 @@ export async function sendCodeMail(to: string, code: string, purpose: "login" | 
   if (!mailEnabled()) throw new AppError(503, "not_configured", "E-post är inte igång än.");
   const t = CODE_TEXT[lang];
   const lead = purpose === "reset" ? t.reset : t.intro;
+  const fake = fakeFile();
+  if (fake) {
+    await fs.appendFile(fake, `${JSON.stringify({ to, code, purpose })}\n`);
+    return;
+  }
   const html =
     `<div style="font-family:-apple-system,Segoe UI,Arial,sans-serif;max-width:480px;margin:0 auto;padding:24px;color:#18181b">` +
     `<p style="font-size:20px;font-weight:600;margin:0 0 16px">whis<span style="color:#7c3aed">per</span></p>` +

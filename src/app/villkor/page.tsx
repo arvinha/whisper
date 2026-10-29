@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import {
   ANSWER_ORE,
+  CUSTOM_TOPUP_MAX,
+  CUSTOM_TOPUP_MIN,
   DKK_PER_SEK,
   LISTEN_ORE_PER_MINUTE,
   TOPUPS,
@@ -66,7 +68,7 @@ const SV: Terms = {
     {
       h: "4. Priser och saldo",
       p: [
-        `Du betalar i förväg genom att fylla på saldo (${SEK_TOPUPS} kr i Sverige, ${DKK_TOPUPS} kr i Danmark). Lyssning kostar ${LISTEN_ORE_PER_MINUTE} öre per minut tal (${listenDkk} øre i DKK), och bara tid när någon pratar räknas. Varje svar du ber om kostar ${ANSWER_ORE} öre (${answerDkk} øre i DKK). Alla priser är inklusive moms.`,
+        `Du betalar i förväg genom att fylla på saldo (${SEK_TOPUPS} kr i Sverige, ${DKK_TOPUPS} kr i Danmark, eller valfritt belopp från ${CUSTOM_TOPUP_MIN} till ${CUSTOM_TOPUP_MAX} kr). Lyssning kostar ${LISTEN_ORE_PER_MINUTE} öre per minut tal (${listenDkk} øre i DKK), och bara tid när någon pratar räknas. Varje svar du ber om kostar ${ANSWER_ORE} öre (${answerDkk} øre i DKK). Alla priser är inklusive moms.`,
         "Saldot går inte ut och inget dras automatiskt från ditt kort. Saldot kan inte överlåtas eller växlas till pengar, utom enligt punkt 5, 11 och 13 eller om vi lägger ner tjänsten – då betalar vi tillbaka det som inte har använts.",
         "Vi kan ändra priserna. Det meddelas i appen eller på hemsidan minst 30 dagar innan det gäller, och gäller bara användning efter ändringen. Godtar du inte en prishöjning kan du inom de 30 dagarna be om att få outnyttjat saldo tillbaka.",
         "Betalningar hanteras av Stripe. Vi ser aldrig ditt kortnummer.",
@@ -174,7 +176,7 @@ const DA: Terms = {
     {
       h: "4. Priser og saldo",
       p: [
-        `Du betaler forud ved at fylde saldo på (${DKK_TOPUPS} kr. i Danmark, ${SEK_TOPUPS} kr. i Sverige). Lytning koster ${listenDkk} øre pr. minuts tale (${LISTEN_ORE_PER_MINUTE} öre i SEK), og kun tid, hvor nogen taler, tæller. Hvert svar, du beder om, koster ${answerDkk} øre (${ANSWER_ORE} öre i SEK). Alle priser er inkl. moms.`,
+        `Du betaler forud ved at fylde saldo på (${DKK_TOPUPS} kr. i Danmark, ${SEK_TOPUPS} kr. i Sverige, eller et valgfrit beløb fra ${CUSTOM_TOPUP_MIN} til ${CUSTOM_TOPUP_MAX} kr.). Lytning koster ${listenDkk} øre pr. minuts tale (${LISTEN_ORE_PER_MINUTE} öre i SEK), og kun tid, hvor nogen taler, tæller. Hvert svar, du beder om, koster ${answerDkk} øre (${ANSWER_ORE} öre i SEK). Alle priser er inkl. moms.`,
         "Saldoen udløber ikke, og der trækkes aldrig automatisk fra dit kort. Saldoen kan ikke overdrages eller veksles til penge, undtagen efter punkt 5, 11 og 13, eller hvis vi lukker tjenesten – så betaler vi det ubrugte tilbage.",
         "Vi kan ændre priserne. Det meddeles i appen eller på hjemmesiden mindst 30 dage før, og det gælder kun brug efter ændringen. Accepterer du ikke en prisstigning, kan du inden for de 30 dage bede om at få den ubrugte saldo tilbage.",
         "Betalinger håndteres af Stripe. Vi ser aldrig dit kortnummer.",
@@ -282,7 +284,7 @@ const EN: Terms = {
     {
       h: "4. Prices and balance",
       p: [
-        `You pay in advance by topping up (SEK ${SEK_TOPUPS} or DKK ${DKK_TOPUPS}). Listening costs ${LISTEN_ORE_PER_MINUTE} öre per minute of speech (${listenDkk} øre in DKK), and only time when someone speaks counts. Each answer you ask for costs ${ANSWER_ORE} öre (${answerDkk} øre in DKK). All prices include VAT.`,
+        `You pay in advance by topping up (SEK ${SEK_TOPUPS} or DKK ${DKK_TOPUPS}, or any amount from ${CUSTOM_TOPUP_MIN} to ${CUSTOM_TOPUP_MAX} kr). Listening costs ${LISTEN_ORE_PER_MINUTE} öre per minute of speech (${listenDkk} øre in DKK), and only time when someone speaks counts. Each answer you ask for costs ${ANSWER_ORE} öre (${answerDkk} øre in DKK). All prices include VAT.`,
         "The balance does not expire and nothing is ever charged to your card automatically. It cannot be transferred or exchanged for money, except under sections 5, 11 and 13, or if we shut the service down – then we refund what is unused.",
         "We may change prices. We announce it in the app or on the website at least 30 days before, and it only applies to use after the change. If you do not accept a price increase, you may ask for your unused balance back within those 30 days.",
         "Payments are handled by Stripe. We never see your card number.",

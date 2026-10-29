@@ -17,6 +17,7 @@ import type {
   SummaryResult,
   TranscribeResult,
 } from "@/lib/shared/types";
+import type { Currency } from "@/lib/shared/pricing";
 import { getT, uiLang } from "./i18n";
 
 const PASSWORD_HEADER = "x-psst-password";
@@ -272,6 +273,15 @@ export class Api {
   /** A Stripe page to pay on. startNow: the buyer asked for the balance to be usable at once. */
   async checkout(kind: CheckoutKind): Promise<{ url: string }> {
     return this.postJson<{ url: string }>("/api/account/checkout", { kind, startNow: true }, this.getPassword());
+  }
+
+  /** Like checkout, for the user's own amount in whole kronor; currency only counts before the first top-up. */
+  async customCheckout(amount: number, currency: Currency): Promise<{ url: string }> {
+    return this.postJson<{ url: string }>(
+      "/api/account/checkout",
+      { kind: "custom", amount, currency, startNow: true },
+      this.getPassword(),
+    );
   }
 
   /** Stripe's page with receipts for earlier top-ups. */

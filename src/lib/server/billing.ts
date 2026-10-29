@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { TOPUPS } from "@/lib/shared/pricing";
+import { CUSTOM_TOPUP_MAX, krToOre, TOPUPS, type Currency } from "@/lib/shared/pricing";
 import type { CheckoutKind } from "@/lib/shared/types";
 import { addBalance, billingEnabled, findAccount, onceForEvent, updateAccount, type Account } from "./accounts";
 import { AppError } from "./errors";
@@ -15,6 +15,8 @@ const LOOKUP_KEYS: Record<CheckoutKind, string> = {
   kr100: "whisper_topup_100_v1",
   kr250: "whisper_topup_250_v1",
 };
+
+export const CUSTOM_KIND = "custom";
 
 export function parseCheckoutKind(value: unknown): CheckoutKind | null {
   return typeof value === "string" && value in TOPUPS ? (value as CheckoutKind) : null;
@@ -103,17 +105,34 @@ function requireBilling(): void {
   if (!billingEnabled()) throw new AppError(503, "not_configured", "Betalning är inte igång än.");
 }
 
-/** A Stripe Checkout page for a top-up. */
+/** A Stripe Checkout page for a pack. */
 export async function checkoutUrl(account: Account, kind: CheckoutKind, origin: string): Promise<string> {
   requireBilling();
+  return checkoutSession(account, origin, { "line_items[0][price]": await priceId(kind), "metadata[kind]": kind });
+}
+
+/** A Stripe Checkout page for the user's own amount, in whole kronor of the account's currency. */
+export async function customCheckoutUrl(account: Account, kr: number, currency: Currency, origin: string): Promise<string> {
+  requireBilling();
+  const ore = krToOre(kr, currency);
+  return checkoutSession(account, origin, {
+    "line_items[0][price_data][currency]": currency,
+    "line_items[0][price_data][unit_amount]": kr * 100,
+    "line_items[0][price_data][tax_behavior]": "inclusive",
+    "line_items[0][price_data][product_data][name]": `Whisper saldo ${kr} ${currency.toUpperCase()}`,
+    "metadata[kind]": CUSTOM_KIND,
+    "metadata[creditOre]": ore,
+  });
+}
+
+async function checkoutSession(account: Account, origin: string, item: Params): Promise<string> {
   const session = await stripe<{ url: string }>("POST", "/checkout/sessions", {
     mode: "payment",
     customer: await customerId(account),
     client_reference_id: account.id,
-    "line_items[0][price]": await priceId(kind),
+    ...item,
     "line_items[0][quantity]": 1,
     "metadata[accountId]": account.id,
-    "metadata[kind]": kind,
     "invoice_creation[enabled]": true,
     allow_promotion_codes: true,
     locale: "auto",
@@ -177,12 +196,21 @@ export async function handleWebhook(event: StripeEvent): Promise<void> {
   if (event.type !== "checkout.session.completed" && event.type !== "checkout.session.async_payment_succeeded") return;
   const session = event.data.object as StripeCheckoutSession;
   if (session.mode !== "payment" || session.payment_status !== "paid") return;
-  const kind = parseCheckoutKind(session.metadata?.kind);
-  if (!kind) return;
+  const ore = creditOf(session.metadata);
+  if (!ore) return;
   const account = await accountFor(session.metadata?.accountId ?? session.client_reference_id, session.customer);
   if (!account) return;
   await onceForEvent(event.id, (accounts) => {
     const a = accounts.find((x) => x.id === account.id);
-    if (a) addBalance(a, TOPUPS[kind].sek * 100, session.currency === "dkk" ? "dkk" : "sek");
+    if (a) addBalance(a, ore, session.currency === "dkk" ? "dkk" : "sek");
   });
+}
+
+/** Balance öre a paid session adds. Only this server writes the metadata, with Stripe's secret key. */
+function creditOf(metadata: Record<string, string> | undefined): number {
+  const kind = parseCheckoutKind(metadata?.kind);
+  if (kind) return TOPUPS[kind].sek * 100;
+  if (metadata?.kind !== CUSTOM_KIND) return 0;
+  const ore = Number(metadata.creditOre);
+  return Number.isSafeInteger(ore) && ore > 0 && ore <= krToOre(CUSTOM_TOPUP_MAX, "dkk") ? ore : 0;
 }

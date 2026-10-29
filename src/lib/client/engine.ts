@@ -26,6 +26,7 @@ import { Segmenter } from "./audio/segmenter";
 import { MediaButtons } from "./mediaButtons";
 import { DICTS, type UiLang } from "@/lib/i18n";
 import { FEATURES } from "@/lib/shared/features";
+import type { Currency } from "@/lib/shared/pricing";
 import { getT, uiLang } from "./i18n";
 import { materialSnippets } from "./codeSearch";
 import { briefDocs, deepMaterial, getActivePrep, prepContext, replaceDocText, staleRepos, type Prep } from "./preps";
@@ -541,6 +542,11 @@ export class Engine {
 
   async openCheckout(kind: CheckoutKind): Promise<void> {
     const { url } = await this.api.checkout(kind);
+    window.location.href = url;
+  }
+
+  async openCustomCheckout(amount: number, currency: Currency): Promise<void> {
+    const { url } = await this.api.customCheckout(amount, currency);
     window.location.href = url;
   }
 

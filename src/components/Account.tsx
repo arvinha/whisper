@@ -7,6 +7,9 @@ import { useT, useUiLang } from "@/lib/client/i18n";
 import type { Dict } from "@/lib/i18n";
 import {
   ANSWER_ORE,
+  CUSTOM_TOPUP_MAX,
+  CUSTOM_TOPUP_MIN,
+  customTopUp,
   LISTEN_ORE_PER_MINUTE,
   TOPUPS,
   TOPUP_KINDS,
@@ -743,6 +746,8 @@ export function AccountPanel({ config, account, upgrade = false }: { config: Pub
   const [error, setError] = useState<string | null>(null);
   const [upgrading, setUpgrading] = useState(upgrade);
   const [startNow, setStartNow] = useState(false);
+  const [amount, setAmount] = useState("");
+  const customKr = customTopUp(Number(amount));
   const currency = accountCurrency(account, lang);
   // No prices while the free minutes last unless the user asks for them; they appear when they are over.
   const inTrial = account.plan === "trial" && account.active;
@@ -840,6 +845,34 @@ export function AccountPanel({ config, account, upgrade = false }: { config: Pub
                 </button>
               </div>
             ))}
+            <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] p-3">
+              <div className="min-w-0 flex-1">
+                <p className="font-medium text-zinc-100">{t.account.customTitle}</p>
+                <p className={`text-xs ${amount && !customKr ? "text-rose-300" : "text-zinc-400"}`}>
+                  {t.account.customHint(CUSTOM_TOPUP_MIN, CUSTOM_TOPUP_MAX)}
+                </p>
+              </div>
+              <label className="flex shrink-0 items-center gap-1.5 rounded-lg border border-white/15 bg-black/20 px-2.5 py-1.5">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  aria-label={t.account.customLabel}
+                  placeholder={String(CUSTOM_TOPUP_MIN)}
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                  className="w-12 bg-transparent text-right font-medium text-zinc-100 outline-none placeholder:text-zinc-600"
+                />
+                <span className="text-zinc-400">kr</span>
+              </label>
+              <button
+                type="button"
+                disabled={busy !== null || !startNow || !customKr}
+                onClick={() => customKr && void go("custom", () => getEngine().openCustomCheckout(customKr, currency))}
+                className="shrink-0 rounded-lg bg-violet-500 px-3.5 py-2 font-medium text-white disabled:opacity-40"
+              >
+                {busy === "custom" ? "…" : t.account.buy}
+              </button>
+            </div>
           </div>
 
           {account.hasBilling && (

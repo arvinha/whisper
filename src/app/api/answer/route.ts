@@ -17,7 +17,8 @@ export async function POST(req: Request) {
     const request = parseAnswerRequest(body);
     const deep = request.mode === "deep";
     // Without material, the stronger model has nothing to dig through; the fast one reads the search results.
-    const llm = (deep && request.context ? getDeepConfig(config) : null) ?? config.llm;
+    // The stronger model reads the material and the web well; without either, the fast one is enough.
+    const llm = (deep && (request.context || request.live) ? getDeepConfig(config) : null) ?? config.llm;
     const country = (req.headers.get("cf-ipcountry") ?? "").toUpperCase();
     const result = await generateAnswer(
       llm,

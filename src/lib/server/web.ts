@@ -235,8 +235,40 @@ function aboutLinks(html: string, base: URL): URL[] {
   return [...found.values()];
 }
 
-/** Reads a job ad, a company site (with its about pages) or a PDF behind a link. */
-export async function readPage(url: URL, vision: LlmConfig | null, signal: AbortSignal): Promise<ExtractResult> {
+export const LINKS_MARK = "\nLänkar på sidan:\n";
+const MAX_SITE_LINKS = 40;
+
+/** The site's own links with their labels, so an answer can open the page a question is about. */
+function siteLinks(html: string, base: URL): string {
+  const found = new Map<string, string>();
+  for (const match of html.matchAll(/<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+    let url: URL;
+    try {
+      url = new URL(decodeEntities(match[1]), base);
+    } catch {
+      continue;
+    }
+    const sameSite = url.hostname.replace(/^www\./, "") === base.hostname.replace(/^www\./, "");
+    if (!sameSite || !/^https?:$/.test(url.protocol) || url.href === base.href || /\.(?:png|jpe?g|gif|svg|webp|css|js|zip)$/i.test(url.pathname)) continue;
+    const label = stripTags(match[2]).replace(/\s+/g, " ").trim().slice(0, 50);
+    url.hash = "";
+    if (label && !found.has(url.href)) found.set(url.href, label);
+    if (found.size >= MAX_SITE_LINKS * 2) break;
+  }
+  // Menu links (careers, about, prices: short paths) before long article links.
+  const depth = (href: string) => new URL(href).pathname.split("/").filter(Boolean).length + new URL(href).pathname.length / 100;
+  return [...found]
+    .sort((a, b) => depth(a[0]) - depth(b[0]))
+    .slice(0, MAX_SITE_LINKS)
+    .map(([href, label]) => `${label}: ${href}`)
+    .join("\n");
+}
+
+/**
+ * Reads a job ad, a company site (with its about pages) or a PDF behind a link. With `links`,
+ * the site's own links follow the text after LINKS_MARK.
+ */
+export async function readPage(url: URL, vision: LlmConfig | null, signal: AbortSignal, links = false): Promise<ExtractResult> {
   const res = await safeGet(url, signal);
   if (res.status === 401 || res.status === 403 || res.status === 999 || res.status === 429) {
     throw new AppError(
@@ -289,9 +321,10 @@ export async function readPage(url: URL, vision: LlmConfig | null, signal: Abort
     );
   }
   const truncated = text.length > MAX_EXTRACT_CHARS;
+  const linkList = links ? siteLinks(html, res.url) : "";
   return {
     name: job ? (/^Jobbannons: (.+)$/m.exec(job)?.[1] ?? title) : title,
-    text: truncated ? text.slice(0, MAX_EXTRACT_CHARS) : text,
+    text: (truncated ? text.slice(0, MAX_EXTRACT_CHARS) : text) + (linkList ? `\n${LINKS_MARK}${linkList}` : ""),
     method: "text",
     truncated,
     kind: "web",

@@ -124,10 +124,11 @@ const NO_SEARCH_RULE = `- If the material does not contain what is asked, say so
 const NO_MATERIAL_INTRO = `The user has no prepared material for this. Answer from what the app fetched from the internet just now, your web search (if you have it) and reliable general knowledge.`;
 
 const LIVE_RULES = `- The message may contain things fetched from the internet just now: websites mentioned in the conversation, the newest changes in the user's GitHub repos (commits, changed files, diffs) and the code of the repo a question is about, with line numbers. That code is the user's own: use it for questions about files, lines and how something is built, naming the file and the exact lines. They are newer than the prepared material: for anything that changed, trust them over the material. When asked what is new or what changed, answer from the commits and diffs concretely (what was added or fixed, in which part), in first person for the user's own repos.
-- If a lookup failed or does not contain what is asked, say briefly and honestly that you cannot see it right now, in the user's voice, and continue with what you do know. Never guess what a page or a commit says.
-- The user says your words to another person: never tell anyone to copy, paste, upload, open, send or check anything elsewhere, and never mention the app or how you get information. If something cannot be read, only say that you cannot open it right now.`;
+- If a lookup failed or does not contain what is asked, use your web tools when you have them (open the page, or search the web); only if they fail too, say briefly and honestly that you cannot see it right now, in the user's voice, and continue with what you do know. Never guess what a page or a commit says.
+- The user says your words to another person: never tell anyone to copy, paste, upload, open, send or check anything elsewhere (not even "kolla deras karriärsida"), and never mention the app or how you get information. If something cannot be read, only say that you cannot open it right now.`;
 
 const WEB_SEARCH_RULE = `- You have a web search tool. Use it for anything current or beyond what you were given: news and headlines (also what is on a named site such as CNN right now), weather, prices, rates, results, opening hours, recent releases or events, a website that could not be read just now, and facts you are not sure of. Search precisely, for example "CNN top stories today" or "weather Aalborg today". For weather, use the place named in the conversation, otherwise the user's place from the profile or material, otherwise their approximate location.
+- You can also open web pages with the web_fetch tool, by their full address (for example "https://picsum.photos/"). Asked what a website or page mentioned in the conversation says or shows: when it was not read just now, could not be read, shows almost nothing (pages built with JavaScript), or the question is about another page of that site (jobs and careers, prices, about, an article), open it: for another page, take the matching address from "Links on the page" (or from a page you opened) and open that page before you answer. Describe what is really there: what the site is, its main sections or items, headlines, prices or images, concretely. If opening fails, search the web for the site instead.
 - When a question asks for facts the prepared material does not contain and that are not about the user's own life (the company or organization the user is meeting, its products, customers, news, numbers or values, a named product, technology, law or event), search the web instead of answering vaguely or saying you do not know. For a company, search its own website first (its name plus what is asked, for example "Netcompany cases public sector"), then news. Never search for what the material already answers, and never for the user's own life, projects or code.
 - Asked to pick, summarize or comment on an article or news item: choose one concrete item from the results (when a connection to the user is asked for, one that really connects, such as technology, business, AI or education) and give its headline, what it is about and why it matters; when the profile or material allows, add how it connects to the user's own work, business or studies.
 - After searching, still reply with only the JSON below and say the facts naturally, without links, source names or citation marks unless they matter. Say every headline and quote in the answer language, translated, never in the original English. Give the answer itself and stop: never end with advice such as "kolla gärna en färsk prognos innan du går ut" or "läs gärna artikeln", and never say what you could not open when you found the answer.`;
@@ -454,7 +455,9 @@ export async function generateAnswer(
   const user = [
     userPrompt(req, live),
     web && country ? `The user's approximate location: country ${country}.` : "",
-    mustSearch ? "This question needs facts from the internet that nothing above contains: search the web before you answer." : "",
+    mustSearch
+      ? "This question needs facts from the internet that nothing above contains: open the page or search the web before you answer."
+      : "",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -473,6 +476,8 @@ export async function generateAnswer(
     signal,
     // Each search adds about 20K tokens of results; two let it find a page and then look closer.
     webSearches: web ? 2 : undefined,
+    // Two let it open a page and then the link on it that answers the question.
+    webFetches: web ? 2 : undefined,
     webCountry: web ? country : undefined,
     mustSearch,
     localTools: search ? [search] : undefined,

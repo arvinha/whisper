@@ -27,6 +27,8 @@ export interface ChatRequest {
   webSearches?: number;
   /** Where the user roughly is, so searches for weather or local news find the right place. */
   webCountry?: string;
+  /** Lets Claude open web pages this many times (pages named in the message, and links on them). */
+  webFetches?: number;
   /** Makes Claude search before answering, for questions only the internet can answer. */
   mustSearch?: boolean;
   /** Tools this server runs itself, such as searching the user's material. Claude only. */
@@ -93,6 +95,10 @@ function initialRejected(model: string): Set<string> {
   return new Set(KNOWN_REJECTED.find(([re]) => re.test(model))?.[1] ?? []);
 }
 
+const WEB_FETCH = "web_fetch";
+/** A page beyond this is cut; enough for a front page or an article, small enough to stay fast. */
+const WEB_FETCH_TOKENS = 10_000;
+
 /** Models that reject tool_choice "any" (forcing a tool call); they are told to search in words instead. */
 const NO_FORCED_TOOLS = /^claude-(sonnet|opus)-[5-9]/;
 
@@ -105,6 +111,9 @@ function anthropicTools(req: ChatRequest, turns: unknown[], mustAnswer: boolean,
       max_uses: req.webSearches,
       ...(req.webCountry ? { user_location: { type: "approximate", country: req.webCountry } } : {}),
     });
+  }
+  if (req.webFetches) {
+    tools.push({ type: "web_fetch_20250910", name: WEB_FETCH, max_uses: req.webFetches, max_content_tokens: WEB_FETCH_TOKENS });
   }
   for (const t of req.localTools ?? []) tools.push({ name: t.name, description: t.description, input_schema: t.inputSchema });
   if (tools.length === 0) return {};
@@ -140,6 +149,7 @@ function buildRequest(
           "x-api-key": cfg.apiKey,
           "anthropic-version": "2023-06-01",
           "content-type": "application/json",
+          ...(req.webFetches ? { "anthropic-beta": "web-fetch-2025-09-10" } : {}),
         },
         body: {
           model: cfg.model,
@@ -234,7 +244,7 @@ interface AnthropicResponse {
     output_tokens?: number;
     cache_read_input_tokens?: number;
     cache_creation_input_tokens?: number;
-    server_tool_use?: { web_search_requests?: number };
+    server_tool_use?: { web_search_requests?: number; web_fetch_requests?: number };
   };
 }
 
@@ -243,7 +253,8 @@ function logUsage(cfg: LlmConfig, data: unknown) {
   if (!u) return;
   console.log(
     `[psst] tokens ${cfg.model}: in ${u.input_tokens ?? 0}, cache read ${u.cache_read_input_tokens ?? 0}, cache write ${u.cache_creation_input_tokens ?? 0}, out ${u.output_tokens ?? 0}` +
-      (u.server_tool_use?.web_search_requests ? `, web searches ${u.server_tool_use.web_search_requests}` : ""),
+      (u.server_tool_use?.web_search_requests ? `, web searches ${u.server_tool_use.web_search_requests}` : "") +
+      (u.server_tool_use?.web_fetch_requests ? `, pages opened ${u.server_tool_use.web_fetch_requests}` : ""),
   );
 }
 
@@ -302,9 +313,14 @@ async function send(cfg: LlmConfig, req: ChatRequest, turns: unknown[], mustAnsw
   const cacheKey = `${cfg.provider}:${cfg.model}`;
   const rejected = rejectedParams.get(cacheKey) ?? initialRejected(cfg.model);
 
-  for (let attempt = 0; attempt <= OPTIONAL_PARAMS.length; attempt++) {
+  for (let attempt = 0; attempt <= OPTIONAL_PARAMS.length + 1; attempt++) {
     const { url, headers, body } = buildRequest(cfg, req, turns, mustAnswer);
     for (const p of rejected) delete body[p];
+    // Opening pages is a newer tool: without it the web search and the material search still work.
+    if (rejected.has(WEB_FETCH) && Array.isArray(body.tools)) {
+      body.tools = (body.tools as Array<{ name?: string }>).filter((t) => t.name !== WEB_FETCH);
+      if ((body.tools as unknown[]).length === 0) delete body.tools;
+    }
     try {
       const res = await providerFetch(label, url, {
         method: "POST",
@@ -315,7 +331,8 @@ async function send(cfg: LlmConfig, req: ChatRequest, turns: unknown[], mustAnsw
       return await res.json();
     } catch (err) {
       if (err instanceof AppError && err.extra.upstreamStatus === 400) {
-        const param = findRejectedParam(err, body);
+        const fetchTool = /web_fetch|web-fetch/i.test(err.message) && !rejected.has(WEB_FETCH) ? WEB_FETCH : null;
+        const param = fetchTool ?? findRejectedParam(err, body);
         if (param && !rejected.has(param)) {
           rejected.add(param);
           rejectedParams.set(cacheKey, rejected);

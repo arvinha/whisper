@@ -1,6 +1,7 @@
+import { lookup as dnsLookup } from "node:dns/promises";
 import type { AnswerRequest, GithubRepo } from "@/lib/shared/types";
 import { AppError } from "./errors";
-import { listRepos, parseLink, readPage, readRepo, recentChanges } from "./web";
+import { LINKS_MARK, listRepos, parseLink, readPage, readRepo, recentChanges } from "./web";
 
 /** Long enough that a follow-up question reuses the lookup, short enough that a new push shows up. */
 const CACHE_MS = 90_000;
@@ -8,23 +9,33 @@ const MAX_CACHE = 40;
 /** The answer waits for the lookups, so a slow site must not hold it up for long. */
 const LOOKUP_MS = 7_000;
 const MAX_LINKS = 2;
-const PAGE_CHARS = 6_000;
+const PAGE_CHARS = 7_000;
+const LINK_CHARS = 2_500;
 const RECENT_SECONDS = 180;
 const RECENT_LINES = 8;
 
-const TLD = "dk|se|no|fi|de|nl|eu|uk|fr|es|com|net|org|io|ai|app|dev|co|nu|tech|info|shop|store|online";
-/** Said out loud ("teknikfix punkt dk"); ".se", ".no" and ".de" are also everyday words, so only at the end of a sentence. */
-const SPOKEN_TLD = "dk|com|net|org|io|ai|eu|app|dev|tech|shop";
+/** Common endings; any other ending (".photos", ".design") is only used when the name exists in DNS. */
+const KNOWN_TLDS = new Set(
+  ("dk se no fi de nl eu uk fr es it pl be at ch com net org io ai app dev co nu tech info shop store online me tv cc gg " +
+    "so sh xyz site website page cloud blog news live studio design agency digital media art photos photo gallery link " +
+    "ly fm is biz pro us ca au nz in jp email space zone group team tools software systems solutions services company " +
+    "business finance bank capital ventures games game club social video film music events travel health food academy " +
+    "education edu gov int").split(" "),
+);
+/** Said out loud ("teknikfix punkt dk"); endings that are also everyday words only count at the end of a sentence. */
+const SPOKEN_WORDS = new Set(["se", "no", "de", "nu", "co", "it", "at", "be", "in", "is", "so", "me", "us", "to", "page", "link", "art", "team", "live", "news"]);
+/** File types and abbreviations that look like domains ("main.py", "Next.js", "t.ex"). */
+const NOT_TLDS = new Set(
+  ("js jsx ts tsx mjs cjs py pyc rb java kt kts go rs php cs cpp hpp h c m md txt pdf doc docx xls xlsx ppt pptx csv tsv " +
+    "json yml yaml xml html htm css scss sass less png jpg jpeg gif svg webp ico mp3 mp4 mov wav zip tar gz rar exe dll so " +
+    "sh bat ps1 sql lock log env ini cfg conf toml tex bib ipynb vue svelte swift dart lua pl ex exs erl hs ml scala gradle " +
+    "jar war apk ipa dmg iso bak tmp old net5 aspx jsp asp cgi").split(" "),
+);
 
 const URL_RE = /https?:\/\/[^\s<>"']+/giu;
-const DOMAIN_RE = new RegExp(
-  `(?<![\\p{L}\\p{N}@./-])((?:[\\p{L}\\p{N}](?:[\\p{L}\\p{N}-]*[\\p{L}\\p{N}])?\\.)+(?:${TLD}))(\\/[^\\s<>"']*)?(?![\\p{L}\\p{N}-])`,
-  "giu",
-);
-const SPOKEN_RE = new RegExp(
-  `(?<![\\p{L}\\p{N}])([\\p{L}\\p{N}][\\p{L}\\p{N}-]+)\\s+(?:punkt|dot|prik)\\s+((?:${SPOKEN_TLD})(?![\\p{L}\\p{N}])|(?:se|no|de)(?=\\s*[.,!?]*\\s*$))`,
-  "giu",
-);
+const DOMAIN_RE =
+  /(?<![\p{L}\p{N}@./-])((?:[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?\.)+([a-z]{2,24}))(\/[^\s<>"']*)?(?![\p{L}\p{N}-])/giu;
+const SPOKEN_RE = /(?<![\p{L}\p{N}])([\p{L}\p{N}][\p{L}\p{N}-]+)\s+(?:punkt|dot|prik)\s+([a-z]{2,12})(?![\p{L}\p{N}])(?=(\s*[.,!?]*\s*$)?)/giu;
 const GITHUB_REPO = /^\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))\/([A-Za-z0-9._-]{1,100})/;
 
 /** A question about the user's code, so the code itself is fetched from GitHub with line numbers. */
@@ -70,8 +81,14 @@ export function mentionedLinks(req: Pick<AnswerRequest, "transcript" | "question
   for (const line of text.split("\n")) {
     found.push(...(line.match(URL_RE) ?? []));
     const withoutUrls = line.replace(URL_RE, " ");
-    for (const m of withoutUrls.matchAll(DOMAIN_RE)) found.push(m[0]);
-    for (const m of withoutUrls.matchAll(SPOKEN_RE)) found.push(`${m[1]}.${m[2]}`);
+    for (const m of withoutUrls.matchAll(DOMAIN_RE)) {
+      if (!NOT_TLDS.has(m[2].toLowerCase())) found.push(m[0]);
+    }
+    for (const m of withoutUrls.matchAll(SPOKEN_RE)) {
+      const tld = m[2].toLowerCase();
+      const atEnd = m[3] !== undefined;
+      if (KNOWN_TLDS.has(tld) && (!SPOKEN_WORDS.has(tld) || atEnd)) found.push(`${m[1]}.${tld}`);
+    }
   }
   const urls = new Map<string, URL>();
   for (const raw of found) {
@@ -85,6 +102,22 @@ export function mentionedLinks(req: Pick<AnswerRequest, "transcript" | "question
     }
   }
   return [...urls.values()].slice(-MAX_LINKS);
+}
+
+const DNS_MS = 1_500;
+
+/** Whether a name with an uncommon ending (".photos") is a real site rather than words with a dot. */
+async function exists(url: URL): Promise<boolean> {
+  if (KNOWN_TLDS.has(url.hostname.split(".").pop()!.toLowerCase())) return true;
+  try {
+    await Promise.race([
+      dnsLookup(url.hostname),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), DNS_MS)),
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Why a lookup failed, in words for the model: the app's own advice (copy, paste…) must never reach the answer. */
@@ -223,13 +256,18 @@ export async function liveLookups(req: AnswerRequest, signal: AbortSignal): Prom
     if (repo) repos.add(`${repo[1]}/${repo[2].replace(/\.git$/, "")}`);
     else if (url.hostname.replace(/^www\./, "") !== "github.com") pages.push(url);
   }
+  const real = await Promise.all(pages.map(exists));
+  pages.splice(0, pages.length, ...pages.filter((_, i) => real[i]));
   const code = CODE_QUESTION.test(recentText(req));
   if (pages.length === 0 && repos.size === 0 && !code) return "";
 
   const limit = AbortSignal.any([signal, AbortSignal.timeout(LOOKUP_MS)]);
   const jobs = [
     ...pages.map((url) =>
-      cached(`page:${url.href}`, async () => (await readPage(url, null, limit)).text.slice(0, PAGE_CHARS)).then(
+      cached(`page:${url.href}`, async () => {
+        const [text, links = ""] = (await readPage(url, null, limit, true)).text.split(LINKS_MARK);
+        return text.slice(0, PAGE_CHARS) + (links ? `\n\nLinks on the page (open one with web_fetch when the question is about it):\n${links.slice(0, LINK_CHARS)}` : "");
+      }).then(
         (text) => `Website ${url.href}, read just now:\n${text}`,
         (err: unknown) => `Website ${url.href}: could not be read just now (${reason(err)}).`,
       ),
